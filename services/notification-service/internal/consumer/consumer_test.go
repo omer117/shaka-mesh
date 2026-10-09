@@ -63,13 +63,16 @@ func (d *acknowledgingDelivery) Nack(uint64, bool, bool) error {
 
 func TestHandleDeliveryLogsAndAcknowledgesAlert(t *testing.T) {
 	var output bytes.Buffer
-	alertConsumer := New("", log.New(&output, "", 0))
 	event := domain.SwellAlertEvent{
 		BeachID:    "b1",
 		BeachName:  "Hilton Beach",
 		WaveHeight: 1.8,
 		Timestamp:  time.Date(2026, time.October, 9, 7, 0, 0, 0, time.UTC),
 	}
+	var published domain.SwellAlertEvent
+	alertConsumer := NewWithHandler("", log.New(&output, "", 0), func(alert domain.SwellAlertEvent) {
+		published = alert
+	})
 	body, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("encode event: %v", err)
@@ -81,6 +84,9 @@ func TestHandleDeliveryLogsAndAcknowledgesAlert(t *testing.T) {
 	}
 	if delivery.ackCalls != 1 || delivery.rejectCalls != 0 {
 		t.Fatalf("expected one ack and no rejects, got ack=%d reject=%d", delivery.ackCalls, delivery.rejectCalls)
+	}
+	if published != event {
+		t.Fatalf("expected event to be published before acknowledgement, got %+v", published)
 	}
 	logged := output.String()
 	for _, want := range []string{"SWELL ALERT", `"Hilton Beach"`, `id="b1"`, "wave_height=1.80m"} {

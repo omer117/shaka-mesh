@@ -43,3 +43,41 @@ Authorization: Bearer {{authToken}}
   "longitude": 34.7674,
   "description": "Consistent reef break"
 }
+
+### Shop catalog
+GET {{api}}/shop/products
+
+### Get signed-in shopping cart
+GET {{api}}/shop/cart
+Authorization: Bearer {{authToken}}
+
+### Add one product to the cart
+POST {{api}}/shop/cart/items
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+{
+  "product_id": "board-fish-58",
+  "quantity": 1
+}
+
+### Simulated checkout (creates a paid demo order; no payment is collected)
+POST {{api}}/shop/checkout
+Authorization: Bearer {{authToken}}
+
+### Forum categories and discussions
+GET {{api}}/forum/categories
+
+###
+GET {{api}}/forum/threads
+
+### Create a forum discussion
+POST {{api}}/forum/threads
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+{
+  "category_slug": "local-breaks",
+  "title": "Dawn patrol recommendations?",
+  "body": "Where are you heading this weekend?"
+}

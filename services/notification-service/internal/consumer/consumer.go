@@ -22,6 +22,7 @@ const (
 type Consumer struct {
 	amqpURL string
 	logger  *log.Logger
+	onAlert func(domain.SwellAlertEvent)
 }
 
 type incomingDelivery interface {
@@ -47,10 +48,14 @@ func (d rabbitDelivery) Body() []byte {
 }
 
 func New(amqpURL string, logger *log.Logger) *Consumer {
+	return NewWithHandler(amqpURL, logger, nil)
+}
+
+func NewWithHandler(amqpURL string, logger *log.Logger, onAlert func(domain.SwellAlertEvent)) *Consumer {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Consumer{amqpURL: amqpURL, logger: logger}
+	return &Consumer{amqpURL: amqpURL, logger: logger, onAlert: onAlert}
 }
 
 func (c *Consumer) Run(ctx context.Context) error {
@@ -148,6 +153,9 @@ func (c *Consumer) handleIncomingDelivery(delivery incomingDelivery) error {
 		event.WaveHeight,
 		event.Timestamp.UTC().Format(time.RFC3339),
 	)
+	if c.onAlert != nil {
+		c.onAlert(event)
+	}
 	if err := delivery.Ack(false); err != nil {
 		return fmt.Errorf("acknowledge swell alert for beach %q: %w", event.BeachID, err)
 	}

@@ -20,6 +20,7 @@ func TestRouterForwardsAuthAndBeachRequests(t *testing.T) {
 	}
 	authRequests := make(chan observedRequest, 1)
 	beachRequests := make(chan observedRequest, 1)
+	communityRequests := make(chan observedRequest, 1)
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authRequests <- observedRequest{path: r.URL.Path, method: r.Method}
 		w.WriteHeader(http.StatusCreated)
@@ -36,13 +37,24 @@ func TestRouterForwardsAuthAndBeachRequests(t *testing.T) {
 		_, _ = io.WriteString(w, "beach")
 	}))
 	defer beachServer.Close()
+	communityServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		communityRequests <- observedRequest{
+			path:       r.URL.Path,
+			method:     r.Method,
+			authUserID: r.Header.Get("X-Authenticated-User-ID"),
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "community")
+	}))
+	defer communityServer.Close()
 	authURL, _ := url.Parse(authServer.URL)
 	beachURL, _ := url.Parse(beachServer.URL)
+	communityURL, _ := url.Parse(communityServer.URL)
 	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
-	handler, err := NewHandler(authURL, beachURL, jwtMiddleware, "http://localhost:3000")
+	handler, err := NewHandler(authURL, beachURL, communityURL, jwtMiddleware, "http://localhost:3000")
 	if err != nil {
 		t.Fatalf("create gateway handler: %v", err)
 	}
@@ -87,16 +99,37 @@ func TestRouterForwardsAuthAndBeachRequests(t *testing.T) {
 	if got := <-beachRequests; got.authUserID != "user-42" {
 		t.Fatalf("expected verified user identity header, got %+v", got)
 	}
+
+	storeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(storeResponse, httptest.NewRequest(http.MethodGet, "/api/v1/shop/products", nil))
+	if storeResponse.Code != http.StatusOK {
+		t.Fatalf("expected public products response 200, got %d", storeResponse.Code)
+	}
+	if got := <-communityRequests; got.path != "/api/v1/shop/products" || got.authUserID != "" {
+		t.Fatalf("unexpected public community request: %+v", got)
+	}
+
+	threadRequest := httptest.NewRequest(http.MethodPost, "/api/v1/forum/threads", nil)
+	threadRequest.Header.Set("Authorization", "Bearer "+token)
+	threadResponse := httptest.NewRecorder()
+	handler.ServeHTTP(threadResponse, threadRequest)
+	if threadResponse.Code != http.StatusOK {
+		t.Fatalf("expected protected forum response 200, got %d", threadResponse.Code)
+	}
+	if got := <-communityRequests; got.path != "/api/v1/forum/threads" || got.authUserID != "user-42" {
+		t.Fatalf("expected verified identity at community service, got %+v", got)
+	}
 }
 
 func TestRouterReturnsNotFoundForUnknownRoute(t *testing.T) {
 	authURL, _ := url.Parse("http://localhost:8081")
 	beachURL, _ := url.Parse("http://localhost:8080")
+	communityURL, _ := url.Parse("http://localhost:8083")
 	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
-	handler, err := NewHandler(authURL, beachURL, jwtMiddleware, "http://localhost:3000")
+	handler, err := NewHandler(authURL, beachURL, communityURL, jwtMiddleware, "http://localhost:3000")
 	if err != nil {
 		t.Fatalf("create gateway handler: %v", err)
 	}
@@ -110,11 +143,12 @@ func TestRouterReturnsNotFoundForUnknownRoute(t *testing.T) {
 func TestRouterAllowsConfiguredFrontendCORS(t *testing.T) {
 	authURL, _ := url.Parse("http://localhost:8081")
 	beachURL, _ := url.Parse("http://localhost:8080")
+	communityURL, _ := url.Parse("http://localhost:8083")
 	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
-	handler, err := NewHandler(authURL, beachURL, jwtMiddleware, "http://localhost:3000")
+	handler, err := NewHandler(authURL, beachURL, communityURL, jwtMiddleware, "http://localhost:3000")
 	if err != nil {
 		t.Fatalf("create gateway handler: %v", err)
 	}
@@ -135,16 +169,20 @@ func TestRouterAllowsConfiguredFrontendCORS(t *testing.T) {
 	if got := response.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, Accept" {
 		t.Fatalf("unexpected allowed headers %q", got)
 	}
+	if got := response.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, DELETE, OPTIONS" {
+		t.Fatalf("unexpected allowed methods %q", got)
+	}
 }
 
 func TestRouterRejectsUnconfiguredCORSOrigin(t *testing.T) {
 	authURL, _ := url.Parse("http://localhost:8081")
 	beachURL, _ := url.Parse("http://localhost:8080")
+	communityURL, _ := url.Parse("http://localhost:8083")
 	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
-	handler, err := NewHandler(authURL, beachURL, jwtMiddleware, "http://localhost:3000")
+	handler, err := NewHandler(authURL, beachURL, communityURL, jwtMiddleware, "http://localhost:3000")
 	if err != nil {
 		t.Fatalf("create gateway handler: %v", err)
 	}

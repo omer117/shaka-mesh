@@ -13,15 +13,16 @@ import (
 	"github.com/omer-asraf/shaka-api-gateway/internal/authn"
 )
 
-func NewHandler(authTarget, beachTarget *url.URL, jwtMiddleware *authn.Middleware, allowedOrigin string) (http.Handler, error) {
-	if authTarget == nil || beachTarget == nil {
-		return nil, errors.New("auth and beach upstream URLs are required")
+func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware *authn.Middleware, allowedOrigin string) (http.Handler, error) {
+	if authTarget == nil || beachTarget == nil || communityTarget == nil {
+		return nil, errors.New("auth, beach, and community upstream URLs are required")
 	}
 	if allowedOrigin == "" {
 		return nil, errors.New("CORS allowed origin is required")
 	}
 	authProxy := newProxy(authTarget, true)
 	beachProxy := newProxy(beachTarget, false)
+	communityProxy := newProxy(communityTarget, false)
 	routes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/health" && r.Method == http.MethodGet:
@@ -29,14 +30,12 @@ func NewHandler(authTarget, beachTarget *url.URL, jwtMiddleware *authn.Middlewar
 		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/"):
 			authProxy.ServeHTTP(w, r)
 		case r.URL.Path == "/api/v1/beaches" || strings.HasPrefix(r.URL.Path, "/api/v1/beaches/"):
-			if claims, ok := authn.UserClaimsFromContext(r.Context()); ok {
-				r.Header.Set("X-Authenticated-User-ID", claims.UserID)
-				r.Header.Set("X-Authenticated-User-Email", claims.Email)
-			} else {
-				r.Header.Del("X-Authenticated-User-ID")
-				r.Header.Del("X-Authenticated-User-Email")
-			}
+			attachIdentity(r)
 			beachProxy.ServeHTTP(w, r)
+		case r.URL.Path == "/api/v1/shop" || strings.HasPrefix(r.URL.Path, "/api/v1/shop/"),
+			r.URL.Path == "/api/v1/forum" || strings.HasPrefix(r.URL.Path, "/api/v1/forum/"):
+			attachIdentity(r)
+			communityProxy.ServeHTTP(w, r)
 		default:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
 		}
@@ -50,7 +49,7 @@ func NewHandler(authTarget, beachTarget *url.URL, jwtMiddleware *authn.Middlewar
 			w.Header().Add("Vary", "Origin")
 			if origin == allowedOrigin {
 				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
 				w.Header().Set("Access-Control-Max-Age", "600")
 			}
@@ -71,13 +70,27 @@ func NewHandler(authTarget, beachTarget *url.URL, jwtMiddleware *authn.Middlewar
 	}), nil
 }
 
+func attachIdentity(r *http.Request) {
+	if claims, ok := authn.UserClaimsFromContext(r.Context()); ok {
+		r.Header.Set("X-Authenticated-User-ID", claims.UserID)
+		r.Header.Set("X-Authenticated-User-Email", claims.Email)
+		return
+	}
+	r.Header.Del("X-Authenticated-User-ID")
+	r.Header.Del("X-Authenticated-User-Email")
+}
+
 func isKnownRoute(r *http.Request) bool {
 	if r.URL.Path == "/health" {
 		return r.Method == http.MethodGet
 	}
 	return strings.HasPrefix(r.URL.Path, "/api/v1/auth/") ||
 		r.URL.Path == "/api/v1/beaches" ||
-		strings.HasPrefix(r.URL.Path, "/api/v1/beaches/")
+		strings.HasPrefix(r.URL.Path, "/api/v1/beaches/") ||
+		r.URL.Path == "/api/v1/shop" ||
+		strings.HasPrefix(r.URL.Path, "/api/v1/shop/") ||
+		r.URL.Path == "/api/v1/forum" ||
+		strings.HasPrefix(r.URL.Path, "/api/v1/forum/")
 }
 
 func newProxy(target *url.URL, stripAPIPrefix bool) *httputil.ReverseProxy {

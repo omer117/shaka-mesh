@@ -67,13 +67,9 @@ High-Performance Microservices Architecture built with Go, PostgreSQL/PostGIS, R
    - פרסום אירוע `SwellAlertTriggered` כאשר תנאי הים בחוף עולים על רף מוגדר.
 
 4. **Community Service (Go):**
-   - פורומים, פוסטים, דיווחי גלים ותגובות.
-   - מסד נתונים: PostgreSQL.
-
-5. **Store & Orders Service (Go):**
-   - קטלוג מוצרים, ניהול מלאי והזמנות.
-   - טרנזקציות ACID ב-PostgreSQL כדי למנוע מכירת יתר.
-   - פרסום אירוע `OrderPlaced` בעת סיום הזמנה.
+   - פורומים, דיונים ותגובות שנשמרים ב-PostgreSQL.
+   - חנות ציוד גלישה, סל קניות והזמנות עם checkout מדומה.
+   - טרנזקציית checkout אטומית מעדכנת מלאי, יוצרת הזמנה ומרוקנת את הסל.
 
 6. **Notification Service (Go):**
    - מאזין (Consumer) לאירועים מ-RabbitMQ (`OrderPlaced`, `SwellAlertTriggered`).
@@ -81,7 +77,7 @@ High-Performance Microservices Architecture built with Go, PostgreSQL/PostGIS, R
 
 7. **Auth Service and API Gateway (Go):**
    - Auth service stores users, hashes passwords with bcrypt, and issues short-lived JWT access tokens.
-   - API gateway is the public HTTP edge, routes auth/beach requests, and verifies JWTs before protected beach operations.
+   - API gateway is the public HTTP edge, routes auth/beach/community requests, and verifies JWTs before protected mutations.
    - Compose connects services on the shared `shaka-network`; backend ports are not published to the host.
 
 ---
@@ -90,7 +86,7 @@ High-Performance Microservices Architecture built with Go, PostgreSQL/PostGIS, R
 
 ### ברמת המערכת המבוזרת (Distributed Patterns)
 
-- **Database-per-Service:** כל מיקרוסרביס הוא בעל הנתונים היחיד של ה-Schema שלו. אין גישה ישירה של שירות למסד של שירות אחר.
+- **Logical data ownership:** Each service owns its tables. For local development, Compose currently runs one PostgreSQL database shared by the services.
 - **Event-Driven Architecture (Pub/Sub):** הפרדת תלויות וזמני תגובה מהירים באמצעות הודעות אסינכרוניות ב-RabbitMQ.
 - **API Gateway Pattern:** הסתרת הטופולוגיה הפנימית של הרשת מהלקוח.
 

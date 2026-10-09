@@ -92,6 +92,13 @@ func isPublic(r *http.Request) bool {
 		(r.URL.Path == "/api/v1/beaches" || strings.HasPrefix(r.URL.Path, "/api/v1/beaches/")) {
 		return true
 	}
+	if r.Method == http.MethodGet &&
+		(r.URL.Path == "/api/v1/shop/products" ||
+			r.URL.Path == "/api/v1/forum/categories" ||
+			r.URL.Path == "/api/v1/forum/threads" ||
+			strings.HasPrefix(r.URL.Path, "/api/v1/forum/threads/")) {
+		return true
+	}
 	return false
 }
 

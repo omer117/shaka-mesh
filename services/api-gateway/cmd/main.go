@@ -40,6 +40,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	communityTarget, err := upstreamURL("COMMUNITY_SERVICE_URL", "http://localhost:8083")
+	if err != nil {
+		return err
+	}
 	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
 	if allowedOrigin == "" {
 		allowedOrigin = "http://localhost:3000"
@@ -48,7 +52,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	handler, err := proxy.NewHandler(authTarget, beachTarget, jwtMiddleware, allowedOrigin)
+	handler, err := proxy.NewHandler(authTarget, beachTarget, communityTarget, jwtMiddleware, allowedOrigin)
 	if err != nil {
 		return err
 	}
