@@ -66,6 +66,9 @@ func run() error {
 	}()
 
 	beachRepository := repository.NewPostgresBeachRepository(pool)
+	if err := beachRepository.EnsureConditionDetails(ctx); err != nil {
+		return err
+	}
 	ingestor := swell.NewIngestor(beachRepository, swell.NewOpenMeteoClient(), publisher)
 	ingestorStopped := make(chan struct{})
 	go func() {

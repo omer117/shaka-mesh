@@ -277,10 +277,12 @@ func (p *Postgres) ListCategories(ctx context.Context) ([]domain.ForumCategory, 
 
 func (p *Postgres) ListThreads(ctx context.Context, category string) ([]domain.ForumThread, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT t.id, t.category_slug, t.title, t.body, u.email, t.created_at, t.updated_at,
+		SELECT t.id, t.category_slug, t.title, t.body,
+		       COALESCE(t.author_name, split_part(u.email, '@', 1), 'Local surfer'),
+		       COALESCE(u.email, ''), t.created_at, t.updated_at,
 		       (SELECT COUNT(*)::INTEGER FROM forum_posts p WHERE p.thread_id = t.id)
 		FROM forum_threads t
-		JOIN users u ON u.id = t.user_id
+		LEFT JOIN users u ON u.id = t.user_id
 		WHERE ($1 = '' OR t.category_slug = $1)
 		ORDER BY t.updated_at DESC, t.id
 		LIMIT 100
@@ -297,6 +299,7 @@ func (p *Postgres) ListThreads(ctx context.Context, category string) ([]domain.F
 			&thread.CategorySlug,
 			&thread.Title,
 			&thread.Body,
+			&thread.AuthorName,
 			&thread.AuthorEmail,
 			&thread.CreatedAt,
 			&thread.UpdatedAt,
@@ -315,16 +318,19 @@ func (p *Postgres) ListThreads(ctx context.Context, category string) ([]domain.F
 func (p *Postgres) GetThread(ctx context.Context, threadID string) (domain.ThreadDetail, error) {
 	var detail domain.ThreadDetail
 	err := p.pool.QueryRow(ctx, `
-		SELECT t.id, t.category_slug, t.title, t.body, u.email, t.created_at, t.updated_at,
+		SELECT t.id, t.category_slug, t.title, t.body,
+		       COALESCE(t.author_name, split_part(u.email, '@', 1), 'Local surfer'),
+		       COALESCE(u.email, ''), t.created_at, t.updated_at,
 		       (SELECT COUNT(*)::INTEGER FROM forum_posts p WHERE p.thread_id = t.id)
 		FROM forum_threads t
-		JOIN users u ON u.id = t.user_id
+		LEFT JOIN users u ON u.id = t.user_id
 		WHERE t.id = $1
 	`, threadID).Scan(
 		&detail.Thread.ID,
 		&detail.Thread.CategorySlug,
 		&detail.Thread.Title,
 		&detail.Thread.Body,
+		&detail.Thread.AuthorName,
 		&detail.Thread.AuthorEmail,
 		&detail.Thread.CreatedAt,
 		&detail.Thread.UpdatedAt,
@@ -338,8 +344,10 @@ func (p *Postgres) GetThread(ctx context.Context, threadID string) (domain.Threa
 	}
 
 	rows, err := p.pool.Query(ctx, `
-		SELECT p.id, p.thread_id, p.body, u.email, p.created_at
-		FROM forum_posts p JOIN users u ON u.id = p.user_id
+		SELECT p.id, p.thread_id, p.body,
+		       COALESCE(p.author_name, split_part(u.email, '@', 1), 'Local surfer'),
+		       COALESCE(u.email, ''), p.created_at
+		FROM forum_posts p LEFT JOIN users u ON u.id = p.user_id
 		WHERE p.thread_id = $1
 		ORDER BY p.created_at, p.id
 	`, threadID)
@@ -350,7 +358,7 @@ func (p *Postgres) GetThread(ctx context.Context, threadID string) (domain.Threa
 	detail.Posts = make([]domain.ForumPost, 0)
 	for rows.Next() {
 		var post domain.ForumPost
-		if err := rows.Scan(&post.ID, &post.ThreadID, &post.Body, &post.AuthorEmail, &post.CreatedAt); err != nil {
+		if err := rows.Scan(&post.ID, &post.ThreadID, &post.Body, &post.AuthorName, &post.AuthorEmail, &post.CreatedAt); err != nil {
 			return domain.ThreadDetail{}, fmt.Errorf("scan forum post: %w", err)
 		}
 		detail.Posts = append(detail.Posts, post)
@@ -374,7 +382,9 @@ func (p *Postgres) CreateThread(ctx context.Context, thread domain.ForumThread, 
 	if err != nil {
 		return domain.ForumThread{}, fmt.Errorf("create forum thread: %w", err)
 	}
-	if err := p.pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&thread.AuthorEmail); err != nil {
+	if err := p.pool.QueryRow(ctx, `
+		SELECT email, split_part(email, '@', 1) FROM users WHERE id = $1
+	`, userID).Scan(&thread.AuthorEmail, &thread.AuthorName); err != nil {
 		return domain.ForumThread{}, fmt.Errorf("load thread author: %w", err)
 	}
 	return thread, nil
@@ -397,7 +407,9 @@ func (p *Postgres) CreatePost(ctx context.Context, post domain.ForumPost, userID
 	`, post.CreatedAt, post.ThreadID); err != nil {
 		return domain.ForumPost{}, fmt.Errorf("update forum thread activity: %w", err)
 	}
-	if err := p.pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&post.AuthorEmail); err != nil {
+	if err := p.pool.QueryRow(ctx, `
+		SELECT email, split_part(email, '@', 1) FROM users WHERE id = $1
+	`, userID).Scan(&post.AuthorEmail, &post.AuthorName); err != nil {
 		return domain.ForumPost{}, fmt.Errorf("load post author: %w", err)
 	}
 	return post, nil

@@ -36,6 +36,12 @@ instead of `localhost`. `HTTP_ADDR` defaults to `:8080`.
 defaults to `30m`. An initial refresh runs at startup. Provider errors are
 logged and do not erase previously stored values.
 
+Beach records include wind speed, swell height and period, swell direction,
+water temperature, tide height and tide phase. The bundled beach entries are
+illustrative sample conditions; swell height is refreshed from Open-Meteo at
+startup and on the configured interval, while the additional sample details
+remain seeded values until a live data provider is connected.
+
 When a successfully stored swell reading is above `1.5` meters, the service
 publishes a persistent JSON `SwellAlertEvent` to the durable topic exchange
 `surf_events` with routing key `surf.swell.alert`. Publishing failures are

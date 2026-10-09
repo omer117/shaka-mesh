@@ -70,7 +70,7 @@ func TestGetAllBeaches(t *testing.T) {
 	if got, want := response.Header().Get("Content-Type"), "application/json; charset=utf-8"; got != want {
 		t.Fatalf("unexpected content type %q, want %q", got, want)
 	}
-	if got, want := response.Body.String(), "[{\"id\":\"b1\",\"name\":\"Hilton Beach\",\"latitude\":0,\"longitude\":0,\"wave_height\":0,\"wind_speed\":0,\"description\":\"\",\"created_at\":\"0001-01-01T00:00:00Z\",\"updated_at\":\"0001-01-01T00:00:00Z\"}]\n"; got != want {
+	if got, want := response.Body.String(), "[{\"id\":\"b1\",\"name\":\"Hilton Beach\",\"latitude\":0,\"longitude\":0,\"wave_height\":0,\"wind_speed\":0,\"wave_period_seconds\":0,\"swell_direction_degrees\":0,\"water_temperature_celsius\":0,\"tide_height_meters\":0,\"tide_phase\":\"\",\"description\":\"\",\"created_at\":\"0001-01-01T00:00:00Z\",\"updated_at\":\"0001-01-01T00:00:00Z\"}]\n"; got != want {
 		t.Fatalf("unexpected response body %q, want %q", got, want)
 	}
 }

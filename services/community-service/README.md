@@ -1,8 +1,9 @@
 # Community Service
 
 Provides the persisted surf shop and forum APIs using the shared PostgreSQL
-database. The service applies its idempotent schema and seeds the initial
-catalog and forum categories at startup.
+database. The service applies its idempotent schema and seeds a sample surf-gear catalog,
+forum categories, discussions, and replies at startup. Seed discussions use
+clearly marked demo display names and do not create fake login accounts.
 
 ## Configuration
 

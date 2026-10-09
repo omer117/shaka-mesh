@@ -19,11 +19,57 @@ func NewPostgresBeachRepository(db *pgxpool.Pool) *PostgresBeachRepository {
 	return &PostgresBeachRepository{db: db}
 }
 
+func (r *PostgresBeachRepository) EnsureConditionDetails(ctx context.Context) error {
+	_, err := r.db.Exec(ctx, `
+		ALTER TABLE beaches
+			ADD COLUMN IF NOT EXISTS wave_period_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+			ADD COLUMN IF NOT EXISTS swell_direction_degrees DOUBLE PRECISION NOT NULL DEFAULT 0,
+			ADD COLUMN IF NOT EXISTS water_temperature_celsius DOUBLE PRECISION NOT NULL DEFAULT 0,
+			ADD COLUMN IF NOT EXISTS tide_height_meters DOUBLE PRECISION NOT NULL DEFAULT 0,
+			ADD COLUMN IF NOT EXISTS tide_phase VARCHAR(20) NOT NULL DEFAULT 'N/A';
+
+		UPDATE beaches
+		SET wind_speed = CASE
+				WHEN wind_speed = 0 THEN CASE id
+					WHEN 'b1' THEN 7.5 WHEN 'b2' THEN 6.2 WHEN 'b3' THEN 9.1 ELSE wind_speed END
+				ELSE wind_speed
+			END,
+			wave_period_seconds = CASE id
+				WHEN 'b1' THEN 7.8 WHEN 'b2' THEN 6.9 WHEN 'b3' THEN 8.4 ELSE wave_period_seconds END,
+			swell_direction_degrees = CASE id
+				WHEN 'b1' THEN 285 WHEN 'b2' THEN 290 WHEN 'b3' THEN 305 ELSE swell_direction_degrees END,
+			water_temperature_celsius = CASE id
+				WHEN 'b1' THEN 24.1 WHEN 'b2' THEN 24.0 WHEN 'b3' THEN 23.2 ELSE water_temperature_celsius END,
+			tide_height_meters = CASE id
+				WHEN 'b1' THEN 0.42 WHEN 'b2' THEN 0.38 WHEN 'b3' THEN 0.51 ELSE tide_height_meters END,
+			tide_phase = CASE id
+				WHEN 'b1' THEN 'Rising' WHEN 'b2' THEN 'Rising' WHEN 'b3' THEN 'Falling' ELSE tide_phase END,
+			description = CASE id
+				WHEN 'b1' THEN CASE WHEN description = 'Top surf spot with solid reef break'
+					THEN 'Exposed reef break with a fast takeoff; best on a clean west swell.' ELSE description END
+				WHEN 'b2' THEN CASE WHEN description = 'Protected bay, good for longboarding'
+					THEN 'Sheltered sandy bay with a mellow longboard peak and easy beach access.' ELSE description END
+				WHEN 'b3' THEN CASE WHEN description = 'Popular surf beach in northern Israel'
+					THEN 'Open northern coast beach that handles longer-period winter swell.' ELSE description END
+				ELSE description
+			END
+		WHERE id IN ('b1', 'b2', 'b3')
+		  AND (wind_speed = 0 OR wave_period_seconds = 0 OR swell_direction_degrees = 0
+		       OR water_temperature_celsius = 0 OR tide_height_meters = 0 OR tide_phase = 'N/A')
+	`)
+	if err != nil {
+		return fmt.Errorf("ensure beach condition details: %w", err)
+	}
+	return nil
+}
+
 // GetAll שולף את כל החופים הקיימים
 func (r *PostgresBeachRepository) GetAll(ctx context.Context) ([]domain.Beach, error) {
 	query := `
 		SELECT id, name, latitude, longitude, COALESCE(wave_height, 0), COALESCE(wind_speed, 0),
-		       COALESCE(description, ''), created_at, updated_at
+		       COALESCE(wave_period_seconds, 0), COALESCE(swell_direction_degrees, 0),
+		       COALESCE(water_temperature_celsius, 0), COALESCE(tide_height_meters, 0),
+		       COALESCE(tide_phase, 'N/A'), COALESCE(description, ''), created_at, updated_at
 		FROM beaches
 	`
 	rows, err := r.db.Query(ctx, query)
@@ -37,7 +83,8 @@ func (r *PostgresBeachRepository) GetAll(ctx context.Context) ([]domain.Beach, e
 		var b domain.Beach
 		err := rows.Scan(
 			&b.ID, &b.Name, &b.Latitude, &b.Longitude,
-			&b.WaveHeight, &b.WindSpeed, &b.Description,
+			&b.WaveHeight, &b.WindSpeed, &b.WavePeriodSeconds, &b.SwellDirectionDegrees,
+			&b.WaterTemperatureCelsius, &b.TideHeightMeters, &b.TidePhase, &b.Description,
 			&b.CreatedAt, &b.UpdatedAt,
 		)
 		if err != nil {
@@ -57,7 +104,9 @@ func (r *PostgresBeachRepository) FindNearby(ctx context.Context, lat, lon float
 	// ST_DWithin מודדת מרחק במטרים (לכן radiusKm * 1000)
 	query := `
 		SELECT id, name, latitude, longitude, COALESCE(wave_height, 0), COALESCE(wind_speed, 0),
-		       COALESCE(description, ''), created_at, updated_at
+		       COALESCE(wave_period_seconds, 0), COALESCE(swell_direction_degrees, 0),
+		       COALESCE(water_temperature_celsius, 0), COALESCE(tide_height_meters, 0),
+		       COALESCE(tide_phase, 'N/A'), COALESCE(description, ''), created_at, updated_at
 		FROM beaches
 		WHERE ST_DWithin(
 			location,
@@ -81,7 +130,8 @@ func (r *PostgresBeachRepository) FindNearby(ctx context.Context, lat, lon float
 		var b domain.Beach
 		err := rows.Scan(
 			&b.ID, &b.Name, &b.Latitude, &b.Longitude,
-			&b.WaveHeight, &b.WindSpeed, &b.Description,
+			&b.WaveHeight, &b.WindSpeed, &b.WavePeriodSeconds, &b.SwellDirectionDegrees,
+			&b.WaterTemperatureCelsius, &b.TideHeightMeters, &b.TidePhase, &b.Description,
 			&b.CreatedAt, &b.UpdatedAt,
 		)
 		if err != nil {
@@ -100,14 +150,17 @@ func (r *PostgresBeachRepository) FindNearby(ctx context.Context, lat, lon float
 func (r *PostgresBeachRepository) GetByID(ctx context.Context, id string) (*domain.Beach, error) {
 	query := `
 		SELECT id, name, latitude, longitude, COALESCE(wave_height, 0), COALESCE(wind_speed, 0),
-		       COALESCE(description, ''), created_at, updated_at
+		       COALESCE(wave_period_seconds, 0), COALESCE(swell_direction_degrees, 0),
+		       COALESCE(water_temperature_celsius, 0), COALESCE(tide_height_meters, 0),
+		       COALESCE(tide_phase, 'N/A'), COALESCE(description, ''), created_at, updated_at
 		FROM beaches
 		WHERE id = $1
 	`
 	var b domain.Beach
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&b.ID, &b.Name, &b.Latitude, &b.Longitude,
-		&b.WaveHeight, &b.WindSpeed, &b.Description,
+		&b.WaveHeight, &b.WindSpeed, &b.WavePeriodSeconds, &b.SwellDirectionDegrees,
+		&b.WaterTemperatureCelsius, &b.TideHeightMeters, &b.TidePhase, &b.Description,
 		&b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {

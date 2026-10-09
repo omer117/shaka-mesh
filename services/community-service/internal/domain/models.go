@@ -52,6 +52,7 @@ type ForumThread struct {
 	CategorySlug string    `json:"category_slug"`
 	Title        string    `json:"title"`
 	Body         string    `json:"body"`
+	AuthorName   string    `json:"author_name"`
 	AuthorEmail  string    `json:"author_email"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -62,6 +63,7 @@ type ForumPost struct {
 	ID          string    `json:"id"`
 	ThreadID    string    `json:"thread_id"`
 	Body        string    `json:"body"`
+	AuthorName  string    `json:"author_name"`
 	AuthorEmail string    `json:"author_email"`
 	CreatedAt   time.Time `json:"created_at"`
 }

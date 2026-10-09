@@ -10,15 +10,20 @@ var ErrBeachNotFound = errors.New("beach not found")
 
 // Beach מייצג חוף גלישה במערכת
 type Beach struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Latitude    float64   `json:"latitude"`
-	Longitude   float64   `json:"longitude"`
-	WaveHeight  float64   `json:"wave_height"` // גובה גל במטרים
-	WindSpeed   float64   `json:"wind_speed"`  // מהירות רוח בקשר
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                      string    `json:"id"`
+	Name                    string    `json:"name"`
+	Latitude                float64   `json:"latitude"`
+	Longitude               float64   `json:"longitude"`
+	WaveHeight              float64   `json:"wave_height"` // גובה גל במטרים
+	WindSpeed               float64   `json:"wind_speed"`  // מהירות רוח בקשר
+	WavePeriodSeconds       float64   `json:"wave_period_seconds"`
+	SwellDirectionDegrees   float64   `json:"swell_direction_degrees"`
+	WaterTemperatureCelsius float64   `json:"water_temperature_celsius"`
+	TideHeightMeters        float64   `json:"tide_height_meters"`
+	TidePhase               string    `json:"tide_phase"`
+	Description             string    `json:"description"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
 }
 
 // BeachRepository מגדיר את החוזה (Interface) מול מסד הנתונים
