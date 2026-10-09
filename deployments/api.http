@@ -1,0 +1,45 @@
+@baseUrl = http://localhost:8000
+@api = {{baseUrl}}/api/v1
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Register
+# @name register
+POST {{api}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "surfer@example.com",
+  "password": "correct horse battery"
+}
+
+### Login
+# @name login
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "surfer@example.com",
+  "password": "correct horse battery"
+}
+
+@authToken = {{login.response.body.access_token}}
+
+### Get All Beaches
+GET {{api}}/beaches
+
+### Nearby Beaches (Tel Aviv Area)
+GET {{api}}/beaches/nearby?lat=32.0886&lon=34.7674&radius_km=15
+
+### Create Beach
+POST {{api}}/beaches
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+{
+  "name": "Hilton Beach Tel Aviv",
+  "latitude": 32.0886,
+  "longitude": 34.7674,
+  "description": "Consistent reef break"
+}
