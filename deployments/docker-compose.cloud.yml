@@ -1,0 +1,68 @@
+services:
+  beach-db:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in deployments/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deployments/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-shaka_beach_db}
+    ports: !reset []
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+
+  rabbitmq:
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?Set RABBITMQ_DEFAULT_USER in deployments/.env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?Set RABBITMQ_DEFAULT_PASS in deployments/.env}
+    ports: !reset []
+
+  beach-service:
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@beach-db:5432/${POSTGRES_DB:-shaka_beach_db}?sslmode=disable
+      AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
+      E2E_ALERT_TEST_TOKEN: ""
+
+  auth-service:
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@beach-db:5432/${POSTGRES_DB:-shaka_beach_db}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in deployments/.env}
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:?Set CORS_ALLOWED_ORIGIN in deployments/.env}
+
+  notification-service:
+    environment:
+      AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:?Set CORS_ALLOWED_ORIGIN in deployments/.env}
+    ports: !reset []
+
+  community-service:
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@beach-db:5432/${POSTGRES_DB:-shaka_beach_db}?sslmode=disable
+
+  api-gateway:
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in deployments/.env}
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:?Set CORS_ALLOWED_ORIGIN in deployments/.env}
+    ports: !reset []
+
+  edge:
+    image: caddy:2.10-alpine
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?Set PUBLIC_HOSTNAME in deployments/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - shaka-network
+
+volumes:
+  caddy_data:
+  caddy_config:

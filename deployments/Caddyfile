@@ -1,0 +1,7 @@
+{$PUBLIC_HOSTNAME} {
+	@events path /events
+	reverse_proxy @events notification-service:8082 {
+		flush_interval -1
+	}
+	reverse_proxy api-gateway:8000
+}

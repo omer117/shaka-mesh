@@ -69,6 +69,13 @@ func run() error {
 	if err := beachRepository.EnsureConditionDetails(ctx); err != nil {
 		return err
 	}
+	if err := beachRepository.EnsureIsraelSurfBeaches(ctx); err != nil {
+		return err
+	}
+	e2eAlertTestToken := os.Getenv("E2E_ALERT_TEST_TOKEN")
+	if e2eAlertTestToken != "" && len(e2eAlertTestToken) < 32 {
+		return errors.New("E2E_ALERT_TEST_TOKEN must be at least 32 characters when enabled")
+	}
 	ingestor := swell.NewIngestor(beachRepository, swell.NewOpenMeteoClient(), publisher)
 	ingestorStopped := make(chan struct{})
 	go func() {
@@ -84,7 +91,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              address,
-		Handler:           handler.New(beachRepository),
+		Handler:           handler.NewWithLiveConditions(beachRepository, ingestor, publisher, e2eAlertTestToken),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
