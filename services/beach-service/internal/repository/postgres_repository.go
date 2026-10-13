@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/omer-asraf/shaka-beach-service/internal/domain"
 )
+
+//go:embed israel_surf_beaches.sql
+var israelSurfBeachesSQL string
 
 type PostgresBeachRepository struct {
 	db *pgxpool.Pool
@@ -59,6 +63,13 @@ func (r *PostgresBeachRepository) EnsureConditionDetails(ctx context.Context) er
 	`)
 	if err != nil {
 		return fmt.Errorf("ensure beach condition details: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresBeachRepository) EnsureIsraelSurfBeaches(ctx context.Context) error {
+	if _, err := r.db.Exec(ctx, israelSurfBeachesSQL); err != nil {
+		return fmt.Errorf("ensure Israel surf beaches: %w", err)
 	}
 	return nil
 }
@@ -195,6 +206,21 @@ func (r *PostgresBeachRepository) UpdateWaveHeight(ctx context.Context, id strin
 	`, id, height)
 	if err != nil {
 		return fmt.Errorf("failed to update beach swell height: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: %s", domain.ErrBeachNotFound, id)
+	}
+	return nil
+}
+
+func (r *PostgresBeachRepository) UpdateConditions(ctx context.Context, id string, waveHeight, windSpeed float64) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE beaches
+		SET wave_height = $2, wind_speed = $3, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`, id, waveHeight, windSpeed)
+	if err != nil {
+		return fmt.Errorf("failed to update beach conditions: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w: %s", domain.ErrBeachNotFound, id)

@@ -34,4 +34,5 @@ type BeachRepository interface {
 	FindNearby(ctx context.Context, lat, lon float64, radiusKm float64) ([]Beach, error)
 	Create(ctx context.Context, beach *Beach) error
 	UpdateWaveHeight(ctx context.Context, id string, height float64) error
+	UpdateConditions(ctx context.Context, id string, waveHeight, windSpeed float64) error
 }

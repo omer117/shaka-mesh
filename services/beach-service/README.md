@@ -1,9 +1,16 @@
 # Beach Service
 
 The service exposes a JSON REST API and periodically refreshes each beach's
-stored swell height from the Open-Meteo Marine API. It stores
-`swell_wave_height` in the existing `wave_height` column; `wind_speed` is not
-updated by the marine-data poller.
+stored swell height and wind speed from Open-Meteo. Swell is read from the
+Marine API and wind from the Forecast API in knots; both are saved to the
+existing `wave_height` and `wind_speed` columns.
+
+At startup, the service idempotently seeds a curated list of major Israeli
+Mediterranean surf beaches in addition to the original sample entries. These
+records provide approximate break coordinates and descriptions for discovery;
+they are not an exhaustive catalog of every local peak, and beach access can
+change. The conditions page can request browser location permission and then
+sorts the full beach list by straight-line distance, showing each distance.
 
 ## Run locally
 
@@ -38,9 +45,10 @@ logged and do not erase previously stored values.
 
 Beach records include wind speed, swell height and period, swell direction,
 water temperature, tide height and tide phase. The bundled beach entries are
-illustrative sample conditions; swell height is refreshed from Open-Meteo at
-startup and on the configured interval, while the additional sample details
-remain seeded values until a live data provider is connected.
+illustrative sample conditions for period, direction, temperature, and tide.
+Swell height and wind speed are refreshed from Open-Meteo at startup and on
+the configured interval. `GET /api/v1/beaches/{id}/live-conditions` triggers
+an immediate refresh and returns the updated record.
 
 When a successfully stored swell reading is above `1.5` meters, the service
 publishes a persistent JSON `SwellAlertEvent` to the durable topic exchange
@@ -53,6 +61,30 @@ The RabbitMQ publisher integration test can be run against the local broker:
 RABBITMQ_TEST_URL='amqp://surfer_dev:surfer_dev_password@localhost:5672/' go test -count=1 ./internal/messaging -run TestRabbitMQPublisherIntegration
 ```
 
+For local E2E testing only, set `E2E_ALERT_TEST_TOKEN` to a random value at
+least 32 characters long before starting the beach service. This conditionally
+enables `POST /api/v1/beaches/_e2e/swell-alert`, requiring both a valid gateway
+JWT and a matching `X-E2E-Test-Token` header. The cloud Compose overlay always
+disables this endpoint.
+
+From Git Bash at the repository root, run the E2E audit using the same token
+for the service and script:
+
+```bash
+export JWT_SECRET="$(openssl rand -hex 32)"
+export E2E_ALERT_TEST_TOKEN="$(openssl rand -hex 32)"
+docker compose -f deployments/docker-compose.yml up -d --build --no-deps --force-recreate beach-service
+bash scripts/test-e2e.sh
+unset E2E_ALERT_TEST_TOKEN
+docker compose -f deployments/docker-compose.yml up -d --no-deps --force-recreate beach-service
+```
+
+The JWT secret is only needed by Compose for variable interpolation here; the
+command recreates only beach-service and does not change the running auth or
+gateway secret. The final command recreates beach-service without the
+test-only route enabled. The script requires Docker, `curl`, Node.js, and npm;
+it creates and removes a temporary test account.
+
 ## Endpoints
 
 | Method | Path                                                      | Description              |
@@ -60,6 +92,7 @@ RABBITMQ_TEST_URL='amqp://surfer_dev:surfer_dev_password@localhost:5672/' go tes
 | `GET`  | `/health`                                                 | Liveness response        |
 | `GET`  | `/api/v1/beaches`                                         | List beaches             |
 | `GET`  | `/api/v1/beaches/{id}`                                    | Get one beach            |
+| `GET`  | `/api/v1/beaches/{id}/live-conditions`                    | Refresh live swell/wind  |
 | `GET`  | `/api/v1/beaches/nearby?lat=32.08&lon=34.77&radius_km=10` | Find beaches by distance |
 | `POST` | `/api/v1/beaches`                                         | Create a beach           |
 

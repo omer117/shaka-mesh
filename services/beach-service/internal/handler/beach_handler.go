@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/omer-asraf/shaka-beach-service/internal/domain"
@@ -28,15 +30,44 @@ type beachRepository interface {
 }
 
 type beachHandler struct {
-	beaches beachRepository
+	beaches           beachRepository
+	conditions        conditionsRefresher
+	alertPublisher    alertPublisher
+	e2eAlertTestToken string
+}
+
+type conditionsRefresher interface {
+	RefreshBeach(ctx context.Context, id string) (*domain.Beach, error)
+}
+
+type alertPublisher interface {
+	PublishSwellAlert(ctx context.Context, event domain.SwellAlertEvent) error
 }
 
 func New(beaches beachRepository) http.Handler {
-	h := beachHandler{beaches: beaches}
+	return NewWithLiveConditions(beaches, nil, nil, "")
+}
+
+func NewWithLiveConditions(
+	beaches beachRepository,
+	conditions conditionsRefresher,
+	publisher alertPublisher,
+	e2eAlertTestToken string,
+) http.Handler {
+	h := beachHandler{
+		beaches:           beaches,
+		conditions:        conditions,
+		alertPublisher:    publisher,
+		e2eAlertTestToken: e2eAlertTestToken,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /api/v1/beaches", h.getAll)
 	mux.HandleFunc("GET /api/v1/beaches/nearby", h.findNearby)
+	mux.HandleFunc("GET /api/v1/beaches/{id}/live-conditions", h.refreshLiveConditions)
+	if e2eAlertTestToken != "" && publisher != nil {
+		mux.HandleFunc("POST /api/v1/beaches/_e2e/swell-alert", h.publishE2EAlert)
+	}
 	mux.HandleFunc("GET /api/v1/beaches/{id}", h.getByID)
 	mux.HandleFunc("POST /api/v1/beaches", h.create)
 	return mux
@@ -75,6 +106,59 @@ func (h beachHandler) getByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, beach)
 }
 
+func (h beachHandler) refreshLiveConditions(w http.ResponseWriter, r *http.Request) {
+	if h.conditions == nil {
+		writeError(w, http.StatusServiceUnavailable, "live conditions are unavailable")
+		return
+	}
+	beach, err := h.conditions.RefreshBeach(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, domain.ErrBeachNotFound) {
+			writeError(w, http.StatusNotFound, "beach not found")
+			return
+		}
+		log.Printf("failed to refresh beach conditions: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to refresh live beach conditions")
+		return
+	}
+	writeJSON(w, http.StatusOK, beach)
+}
+
+func (h beachHandler) publishE2EAlert(w http.ResponseWriter, r *http.Request) {
+	providedToken := r.Header.Get("X-E2E-Test-Token")
+	if len(providedToken) != len(h.e2eAlertTestToken) ||
+		subtle.ConstantTimeCompare([]byte(providedToken), []byte(h.e2eAlertTestToken)) != 1 {
+		writeError(w, http.StatusUnauthorized, "invalid E2E test token")
+		return
+	}
+
+	var input struct {
+		BeachID    string  `json:"beach_id"`
+		BeachName  string  `json:"beach_name"`
+		WaveHeight float64 `json:"wave_height"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil ||
+		strings.TrimSpace(input.BeachID) == "" ||
+		strings.TrimSpace(input.BeachName) == "" ||
+		math.IsNaN(input.WaveHeight) || math.IsInf(input.WaveHeight, 0) ||
+		input.WaveHeight <= 1.5 {
+		writeError(w, http.StatusBadRequest, "valid alert details with wave_height above 1.5 are required")
+		return
+	}
+	event := domain.SwellAlertEvent{
+		BeachID:    strings.TrimSpace(input.BeachID),
+		BeachName:  strings.TrimSpace(input.BeachName),
+		WaveHeight: input.WaveHeight,
+		Timestamp:  time.Now().UTC(),
+	}
+	if err := h.alertPublisher.PublishSwellAlert(r.Context(), event); err != nil {
+		log.Printf("failed to publish E2E swell alert: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to publish E2E swell alert")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "published"})
+}
+
 func (h beachHandler) findNearby(w http.ResponseWriter, r *http.Request) {
 	lat, err := parseCoordinate(r, "lat", -90, 90)
 	if err != nil {
@@ -86,9 +170,13 @@ func (h beachHandler) findNearby(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	radiusKm, err := parseQueryFloat(r, "radius_km")
+	radiusParameter := "radius_km"
+	if r.URL.Query().Get(radiusParameter) == "" && r.URL.Query().Get("radius") != "" {
+		radiusParameter = "radius"
+	}
+	radiusKm, err := parseQueryFloat(r, radiusParameter)
 	if err != nil || radiusKm <= 0 {
-		writeError(w, http.StatusBadRequest, "radius_km must be a positive number")
+		writeError(w, http.StatusBadRequest, "radius_km (or radius) must be a positive number")
 		return
 	}
 

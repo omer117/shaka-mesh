@@ -17,8 +17,28 @@ type stubBeachReader struct {
 	beaches []domain.Beach
 	beach   *domain.Beach
 	nearby  []domain.Beach
+	radius  float64
 	created *domain.Beach
 	err     error
+}
+
+type stubConditionsRefresher struct {
+	beach *domain.Beach
+	err   error
+}
+
+func (s stubConditionsRefresher) RefreshBeach(context.Context, string) (*domain.Beach, error) {
+	return s.beach, s.err
+}
+
+type stubAlertPublisher struct {
+	events []domain.SwellAlertEvent
+	err    error
+}
+
+func (s *stubAlertPublisher) PublishSwellAlert(_ context.Context, event domain.SwellAlertEvent) error {
+	s.events = append(s.events, event)
+	return s.err
 }
 
 func (s stubBeachReader) GetAll(context.Context) ([]domain.Beach, error) {
@@ -29,7 +49,8 @@ func (s stubBeachReader) GetByID(context.Context, string) (*domain.Beach, error)
 	return s.beach, s.err
 }
 
-func (s stubBeachReader) FindNearby(context.Context, float64, float64, float64) ([]domain.Beach, error) {
+func (s *stubBeachReader) FindNearby(_ context.Context, _, _ float64, radius float64) ([]domain.Beach, error) {
+	s.radius = radius
 	return s.nearby, s.err
 }
 
@@ -123,7 +144,8 @@ func TestGetBeachByIDReturnsNotFound(t *testing.T) {
 }
 
 func TestFindNearbyBeaches(t *testing.T) {
-	handler := New(&stubBeachReader{nearby: []domain.Beach{{ID: "b1"}}})
+	repository := &stubBeachReader{nearby: []domain.Beach{{ID: "b1"}}}
+	handler := New(repository)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(
 		http.MethodGet,
@@ -133,6 +155,26 @@ func TestFindNearbyBeaches(t *testing.T) {
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	if repository.radius != 5 {
+		t.Fatalf("expected radius 5 km, got %v", repository.radius)
+	}
+}
+
+func TestFindNearbyBeachesAcceptsRadiusAlias(t *testing.T) {
+	repository := &stubBeachReader{nearby: []domain.Beach{{ID: "b1"}}}
+	handler := New(repository)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/beaches/nearby?lat=32.08&lon=34.77&radius=15",
+		nil,
+	))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, response.Code, response.Body.String())
+	}
+	if repository.radius != 15 {
+		t.Fatalf("expected radius 15 km, got %v", repository.radius)
 	}
 }
 
@@ -147,6 +189,101 @@ func TestFindNearbyBeachesRejectsInvalidCoordinates(t *testing.T) {
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
+	}
+}
+
+func TestRefreshLiveConditions(t *testing.T) {
+	handler := NewWithLiveConditions(
+		&stubBeachReader{},
+		stubConditionsRefresher{beach: &domain.Beach{ID: "b1", WaveHeight: 1.2, WindSpeed: 9.4}},
+		&stubAlertPublisher{},
+		"",
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/beaches/b1/live-conditions", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, response.Code, response.Body.String())
+	}
+	var beach domain.Beach
+	if err := json.Unmarshal(response.Body.Bytes(), &beach); err != nil {
+		t.Fatalf("decode refreshed beach: %v", err)
+	}
+	if beach.WaveHeight != 1.2 || beach.WindSpeed != 9.4 {
+		t.Fatalf("unexpected refreshed conditions: %+v", beach)
+	}
+}
+
+func TestRefreshLiveConditionsMapsMissingBeach(t *testing.T) {
+	handler := NewWithLiveConditions(
+		&stubBeachReader{},
+		stubConditionsRefresher{err: fmt.Errorf("%w: b1", domain.ErrBeachNotFound)},
+		&stubAlertPublisher{},
+		"",
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/beaches/b1/live-conditions", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, response.Code)
+	}
+}
+
+func TestE2EAlertEndpointIsDisabledWithoutToken(t *testing.T) {
+	handler := NewWithLiveConditions(&stubBeachReader{}, nil, &stubAlertPublisher{}, "")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/beaches/_e2e/swell-alert", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected disabled test route to return 404, got %d", response.Code)
+	}
+}
+
+func TestE2EAlertRequiresTestTokenAndPublishes(t *testing.T) {
+	publisher := &stubAlertPublisher{}
+	handler := NewWithLiveConditions(&stubBeachReader{}, nil, publisher, "0123456789abcdef0123456789abcdef")
+
+	unauthorized := httptest.NewRecorder()
+	unauthorizedRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/beaches/_e2e/swell-alert",
+		strings.NewReader(`{"beach_id":"test-1","beach_name":"Test Beach","wave_height":1.8}`),
+	)
+	handler.ServeHTTP(unauthorized, unauthorizedRequest)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized response without test token, got %d", unauthorized.Code)
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/beaches/_e2e/swell-alert",
+		strings.NewReader(`{"beach_id":"test-1","beach_name":"Test Beach","wave_height":1.8}`),
+	)
+	request.Header.Set("X-E2E-Test-Token", "0123456789abcdef0123456789abcdef")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("expected accepted response, got %d: %s", response.Code, response.Body.String())
+	}
+	if len(publisher.events) != 1 || publisher.events[0].BeachID != "test-1" || publisher.events[0].WaveHeight != 1.8 {
+		t.Fatalf("unexpected published events: %+v", publisher.events)
+	}
+}
+
+func TestE2EAlertRejectsWaveBelowThreshold(t *testing.T) {
+	publisher := &stubAlertPublisher{}
+	handler := NewWithLiveConditions(&stubBeachReader{}, nil, publisher, "0123456789abcdef0123456789abcdef")
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/beaches/_e2e/swell-alert",
+		strings.NewReader(`{"beach_id":"test-1","beach_name":"Test Beach","wave_height":1.5}`),
+	)
+	request.Header.Set("X-E2E-Test-Token", "0123456789abcdef0123456789abcdef")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d", response.Code)
+	}
+	if len(publisher.events) != 0 {
+		t.Fatalf("expected no event below threshold, got %+v", publisher.events)
 	}
 }
 

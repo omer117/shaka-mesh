@@ -45,6 +45,7 @@ services:
       - shaka-network
 
   beach-service:
+    image: omer117/shaka-beach-service:latest
     build:
       context: ..
       dockerfile: services/beach-service/Dockerfile
@@ -53,6 +54,7 @@ services:
       AMQP_URL: amqp://surfer_dev:surfer_dev_password@rabbitmq:5672/
       HTTP_ADDR: :8080
       SWELL_REFRESH_INTERVAL: ${SWELL_REFRESH_INTERVAL:-30m}
+      E2E_ALERT_TEST_TOKEN: ${E2E_ALERT_TEST_TOKEN:-}
     expose:
       - "8080"
     depends_on:
@@ -71,6 +73,7 @@ services:
       - shaka-network
 
   auth-service:
+    image: omer117/shaka-auth-service:latest
     build:
       context: ..
       dockerfile: services/auth-service/Dockerfile
@@ -97,6 +100,7 @@ services:
       - shaka-network
 
   notification-service:
+    image: omer117/shaka-notification-service:latest
     build:
       context: ..
       dockerfile: services/notification-service/Dockerfile
@@ -120,6 +124,7 @@ services:
       - shaka-network
 
   community-service:
+    image: omer117/shaka-community-service:latest
     build:
       context: ..
       dockerfile: services/community-service/Dockerfile
@@ -142,6 +147,7 @@ services:
       - shaka-network
 
   api-gateway:
+    image: omer117/shaka-api-gateway:latest
     build:
       context: ..
       dockerfile: services/api-gateway/Dockerfile

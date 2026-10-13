@@ -10,33 +10,46 @@ import (
 )
 
 type stubRepository struct {
-	beaches []domain.Beach
-	heights map[string]float64
-	err     error
+	beaches    []domain.Beach
+	conditions map[string]Conditions
+	err        error
 }
 
 func (r *stubRepository) GetAll(context.Context) ([]domain.Beach, error) {
 	return r.beaches, r.err
 }
 
-func (r *stubRepository) UpdateWaveHeight(_ context.Context, id string, height float64) error {
+func (r *stubRepository) GetByID(_ context.Context, id string) (*domain.Beach, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	for index := range r.beaches {
+		if r.beaches[index].ID == id {
+			beach := r.beaches[index]
+			return &beach, nil
+		}
+	}
+	return nil, domain.ErrBeachNotFound
+}
+
+func (r *stubRepository) UpdateConditions(_ context.Context, id string, waveHeight, windSpeed float64) error {
 	if r.err != nil {
 		return r.err
 	}
-	if r.heights == nil {
-		r.heights = make(map[string]float64)
+	if r.conditions == nil {
+		r.conditions = make(map[string]Conditions)
 	}
-	r.heights[id] = height
+	r.conditions[id] = Conditions{WaveHeight: waveHeight, WindSpeed: windSpeed}
 	return nil
 }
 
-type stubHeightProvider struct {
-	height float64
-	err    error
+type stubConditionsProvider struct {
+	conditions Conditions
+	err        error
 }
 
-func (p stubHeightProvider) SwellHeight(context.Context, float64, float64) (float64, error) {
-	return p.height, p.err
+func (p stubConditionsProvider) CurrentConditions(context.Context, float64, float64) (Conditions, error) {
+	return p.conditions, p.err
 }
 
 type stubAlertPublisher struct {
@@ -53,19 +66,19 @@ func TestIngestorRefreshUpdatesBeachSwell(t *testing.T) {
 	repository := &stubRepository{
 		beaches: []domain.Beach{{ID: "b1", Latitude: 32.08, Longitude: 34.77}},
 	}
-	ingestor := NewIngestor(repository, stubHeightProvider{height: 1.25}, &stubAlertPublisher{})
+	ingestor := NewIngestor(repository, stubConditionsProvider{conditions: Conditions{WaveHeight: 1.25, WindSpeed: 7.5}}, &stubAlertPublisher{})
 	if err := ingestor.Refresh(context.Background()); err != nil {
 		t.Fatalf("refresh swell: %v", err)
 	}
-	if got := repository.heights["b1"]; got != 1.25 {
-		t.Fatalf("expected stored swell height 1.25, got %v", got)
+	if got := repository.conditions["b1"]; got != (Conditions{WaveHeight: 1.25, WindSpeed: 7.5}) {
+		t.Fatalf("expected stored live conditions, got %+v", got)
 	}
 }
 
 func TestIngestorRefreshReportsProviderFailure(t *testing.T) {
 	ingestor := NewIngestor(
 		&stubRepository{beaches: []domain.Beach{{ID: "b1"}}},
-		stubHeightProvider{err: errors.New("API unavailable")},
+		stubConditionsProvider{err: errors.New("API unavailable")},
 		&stubAlertPublisher{},
 	)
 	if err := ingestor.Refresh(context.Background()); err == nil {
@@ -74,7 +87,7 @@ func TestIngestorRefreshReportsProviderFailure(t *testing.T) {
 }
 
 func TestIngestorRunRequiresPositiveInterval(t *testing.T) {
-	ingestor := NewIngestor(&stubRepository{}, stubHeightProvider{}, &stubAlertPublisher{})
+	ingestor := NewIngestor(&stubRepository{}, stubConditionsProvider{}, &stubAlertPublisher{})
 	if err := ingestor.Run(context.Background(), 0); err == nil {
 		t.Fatal("expected a non-positive interval to be rejected")
 	}
@@ -88,7 +101,7 @@ func TestIngestorPublishesAlertsAboveThreshold(t *testing.T) {
 		beaches: []domain.Beach{{ID: "b1", Name: "Hilton Beach", Latitude: 32.08, Longitude: 34.77}},
 	}
 	publisher := &stubAlertPublisher{}
-	ingestor := NewIngestor(repository, stubHeightProvider{height: 1.6}, publisher)
+	ingestor := NewIngestor(repository, stubConditionsProvider{conditions: Conditions{WaveHeight: 1.6, WindSpeed: 11.2}}, publisher)
 	if err := ingestor.Refresh(context.Background()); err != nil {
 		t.Fatalf("refresh swell: %v", err)
 	}
@@ -109,7 +122,7 @@ func TestIngestorDoesNotPublishAtOrBelowThreshold(t *testing.T) {
 		publisher := &stubAlertPublisher{}
 		ingestor := NewIngestor(
 			&stubRepository{beaches: []domain.Beach{{ID: "b1"}}},
-			stubHeightProvider{height: height},
+			stubConditionsProvider{conditions: Conditions{WaveHeight: height, WindSpeed: 8}},
 			publisher,
 		)
 		if err := ingestor.Refresh(context.Background()); err != nil {
@@ -128,7 +141,7 @@ func TestIngestorDoesNotPublishWhenStoreFails(t *testing.T) {
 			beaches: []domain.Beach{{ID: "b1"}},
 			err:     errors.New("database unavailable"),
 		},
-		stubHeightProvider{height: 2},
+		stubConditionsProvider{conditions: Conditions{WaveHeight: 2, WindSpeed: 8}},
 		publisher,
 	)
 	if err := ingestor.Refresh(context.Background()); err == nil {
@@ -142,7 +155,7 @@ func TestIngestorDoesNotPublishWhenStoreFails(t *testing.T) {
 func TestIngestorReturnsPublisherFailure(t *testing.T) {
 	ingestor := NewIngestor(
 		&stubRepository{beaches: []domain.Beach{{ID: "b1"}}},
-		stubHeightProvider{height: 2},
+		stubConditionsProvider{conditions: Conditions{WaveHeight: 2, WindSpeed: 8}},
 		&stubAlertPublisher{err: errors.New("RabbitMQ unavailable")},
 	)
 	if err := ingestor.Refresh(context.Background()); err == nil {
