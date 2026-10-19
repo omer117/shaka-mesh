@@ -96,7 +96,10 @@ export interface ForumThreadDetail {
 }
 
 const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  (process.env.NODE_ENV === "production"
+    ? "https://151.145.82.171.nip.io"
+    : "http://localhost:8000");
 
 export class ApiError extends Error {
   constructor(

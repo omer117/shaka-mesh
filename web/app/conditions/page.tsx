@@ -50,7 +50,10 @@ interface UserCoordinates {
 }
 
 const notificationBaseUrl =
-  process.env.NEXT_PUBLIC_NOTIFICATION_BASE_URL ?? "http://localhost:8082";
+  process.env.NEXT_PUBLIC_NOTIFICATION_BASE_URL ??
+  (process.env.NODE_ENV === "production"
+    ? "https://151.145.82.171.nip.io"
+    : "http://localhost:8082");
 
 function distanceInKm(
   start: UserCoordinates,
