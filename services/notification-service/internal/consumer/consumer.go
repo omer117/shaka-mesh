@@ -17,6 +17,12 @@ const (
 	SurfEventsExchange = "surf_events"
 	SwellQueue         = "notifications_swell_queue"
 	SwellRoutingKey    = "surf.swell.#"
+
+	// Dead-letter topology: rejected (Reject(false)) messages from SwellQueue
+	// are routed by the broker to DeadLetterExchange and land in DeadLetterQueue.
+	DeadLetterExchange   = "swell-alerts.dlx"
+	DeadLetterQueue      = "swell-alerts.dlq"
+	deadLetterRoutingKey = "swell-alerts.dead"
 )
 
 type Consumer struct {
@@ -95,7 +101,14 @@ func (c *Consumer) runQueue(ctx context.Context, queueName string) error {
 	); err != nil {
 		return fmt.Errorf("declare RabbitMQ exchange %q: %w", SurfEventsExchange, err)
 	}
-	if _, err := channel.QueueDeclare(queueName, true, false, false, false, nil); err != nil {
+	if err := declareDeadLetterTopology(channel); err != nil {
+		return err
+	}
+	queueArgs := amqp.Table{
+		"x-dead-letter-exchange":    DeadLetterExchange,
+		"x-dead-letter-routing-key": deadLetterRoutingKey,
+	}
+	if _, err := channel.QueueDeclare(queueName, true, false, false, false, queueArgs); err != nil {
 		return fmt.Errorf("declare RabbitMQ queue %q: %w", queueName, err)
 	}
 	if err := channel.QueueBind(queueName, SwellRoutingKey, SurfEventsExchange, false, nil); err != nil {
@@ -127,6 +140,25 @@ func (c *Consumer) runQueue(ctx context.Context, queueName string) error {
 			}
 		}
 	}
+}
+
+type topologyDeclarer interface {
+	ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error
+	QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error)
+	QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error
+}
+
+func declareDeadLetterTopology(channel topologyDeclarer) error {
+	if err := channel.ExchangeDeclare(DeadLetterExchange, amqp.ExchangeDirect, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare dead-letter exchange %q: %w", DeadLetterExchange, err)
+	}
+	if _, err := channel.QueueDeclare(DeadLetterQueue, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare dead-letter queue %q: %w", DeadLetterQueue, err)
+	}
+	if err := channel.QueueBind(DeadLetterQueue, deadLetterRoutingKey, DeadLetterExchange, false, nil); err != nil {
+		return fmt.Errorf("bind dead-letter queue %q: %w", DeadLetterQueue, err)
+	}
+	return nil
 }
 
 func (c *Consumer) handleIncomingDelivery(delivery incomingDelivery) error {
