@@ -55,6 +55,22 @@ publishes a persistent JSON `SwellAlertEvent` to the durable topic exchange
 `surf_events` with routing key `surf.swell.alert`. Publishing failures are
 logged by the refresh loop.
 
+### Database integration tests
+
+Repository integration tests run against a real PostGIS database started with
+`testcontainers-go` (image `postgis/postgis:16-3.4`). They cover the
+nearby-beach query (`ST_DWithin` radius filter and ordering by distance),
+create/get/update and the idempotent Israel beach seed. They sit behind the
+`integration` build tag, so plain `go test ./...` stays fast and needs no
+Docker. To run them, start Docker and run:
+
+```bash
+go test -tags=integration ./...
+```
+
+The container is initialised with `deployments/init_db.sql`, the same file
+Docker Compose mounts into Postgres.
+
 The RabbitMQ publisher integration test can be run against the local broker:
 
 ```bash
