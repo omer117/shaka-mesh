@@ -21,18 +21,43 @@ const maxRequestBodyBytes = 1 << 20
 
 type Authenticator interface {
 	Register(ctx context.Context, email, password string) (*domain.User, error)
-	Login(ctx context.Context, email, password string) (string, time.Time, error)
+	Login(ctx context.Context, email, password string) (*service.Session, error)
+	Refresh(ctx context.Context, refreshToken string) (*service.Session, error)
+	Logout(ctx context.Context, refreshToken string) error
+}
+
+// CookieConfig describes the refresh-token cookie. Path must be the path the
+// browser sees (the gateway prefix, e.g. /api/v1/auth), not the path this
+// service is mounted at behind the gateway.
+type CookieConfig struct {
+	Name     string
+	Path     string
+	Secure   bool
+	SameSite http.SameSite
+}
+
+// DefaultCookieConfig returns the production-safe defaults.
+func DefaultCookieConfig() CookieConfig {
+	return CookieConfig{
+		Name:     "shaka_refresh",
+		Path:     "/api/v1/auth",
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	}
 }
 
 type authHandler struct {
-	auth Authenticator
+	auth    Authenticator
+	cookies CookieConfig
 }
 
-func New(auth Authenticator) http.Handler {
-	h := authHandler{auth: auth}
+func New(auth Authenticator, cookies CookieConfig) http.Handler {
+	h := authHandler{auth: auth, cookies: cookies}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /auth/register", h.register)
 	mux.HandleFunc("POST /auth/login", h.login)
+	mux.HandleFunc("POST /auth/refresh", h.refresh)
+	mux.HandleFunc("POST /auth/logout", h.logout)
 	mux.HandleFunc("GET /health", h.health)
 	return mux
 }
@@ -76,7 +101,7 @@ func (h authHandler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expiresAt, err := h.auth.Login(r.Context(), input.Email, input.Password)
+	session, err := h.auth.Login(r.Context(), input.Email, input.Password)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidCredentials) {
 			writeError(w, http.StatusUnauthorized, "invalid email or password")
@@ -86,14 +111,79 @@ func (h authHandler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to log in")
 		return
 	}
+	h.writeSession(w, session)
+}
+
+func (h authHandler) refresh(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(h.cookies.Name)
+	if err != nil || cookie.Value == "" {
+		writeError(w, http.StatusUnauthorized, "refresh token required")
+		return
+	}
+	session, err := h.auth.Refresh(r.Context(), cookie.Value)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidRefreshToken) {
+			h.clearCookie(w)
+			writeError(w, http.StatusUnauthorized, "invalid refresh token")
+			return
+		}
+		log.Printf("refresh session: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to refresh session")
+		return
+	}
+	h.writeSession(w, session)
+}
+
+func (h authHandler) logout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(h.cookies.Name); err == nil {
+		if err := h.auth.Logout(r.Context(), cookie.Value); err != nil {
+			log.Printf("logout: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to log out")
+			return
+		}
+	}
+	h.clearCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h authHandler) writeSession(w http.ResponseWriter, session *service.Session) {
+	h.setCookie(w, session.RefreshToken, session.RefreshExpiresAt)
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, struct {
 		AccessToken string    `json:"access_token"`
 		TokenType   string    `json:"token_type"`
 		ExpiresAt   time.Time `json:"expires_at"`
+		Email       string    `json:"email"`
 	}{
-		AccessToken: token,
+		AccessToken: session.AccessToken,
 		TokenType:   "Bearer",
-		ExpiresAt:   expiresAt,
+		ExpiresAt:   session.ExpiresAt,
+		Email:       session.Email,
+	})
+}
+
+func (h authHandler) setCookie(w http.ResponseWriter, value string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     h.cookies.Name,
+		Value:    value,
+		Path:     h.cookies.Path,
+		Expires:  expires,
+		MaxAge:   int(time.Until(expires).Seconds()),
+		HttpOnly: true,
+		Secure:   h.cookies.Secure,
+		SameSite: h.cookies.SameSite,
+	})
+}
+
+func (h authHandler) clearCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     h.cookies.Name,
+		Value:    "",
+		Path:     h.cookies.Path,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   h.cookies.Secure,
+		SameSite: h.cookies.SameSite,
 	})
 }
 

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,6 +46,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	refreshTTL, err := durationEnv("REFRESH_TOKEN_TTL", "168h")
+	if err != nil {
+		return err
+	}
+	cookies, err := cookieConfigFromEnv()
+	if err != nil {
+		return err
+	}
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = ":8081"
@@ -60,10 +70,15 @@ func run() error {
 		return fmt.Errorf("connect to database: %w", err)
 	}
 
-	authService := service.NewAuthService(repository.NewPostgresUserRepository(pool), tokenManager)
+	authService := service.NewAuthService(
+		repository.NewPostgresUserRepository(pool),
+		tokenManager,
+		repository.NewPostgresRefreshTokenRepository(pool),
+		refreshTTL,
+	)
 	server := &http.Server{
 		Addr:              address,
-		Handler:           handler.New(authService),
+		Handler:           handler.New(authService, cookies),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -103,4 +118,36 @@ func durationEnv(name, fallback string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a positive duration", name)
 	}
 	return duration, nil
+}
+
+// cookieConfigFromEnv reads the refresh-cookie settings. Secure defaults to
+// true; set REFRESH_COOKIE_SECURE=false only for plain-HTTP local development,
+// because browsers drop Secure cookies on http:// origins (Safari always does,
+// Chrome and Firefox make an exception for localhost).
+func cookieConfigFromEnv() (handler.CookieConfig, error) {
+	cfg := handler.DefaultCookieConfig()
+	if raw := os.Getenv("REFRESH_COOKIE_SECURE"); raw != "" {
+		secure, err := strconv.ParseBool(raw)
+		if err != nil {
+			return cfg, errors.New("REFRESH_COOKIE_SECURE must be true or false")
+		}
+		cfg.Secure = secure
+	}
+	if raw := os.Getenv("REFRESH_COOKIE_PATH"); raw != "" {
+		cfg.Path = raw
+	}
+	switch strings.ToLower(os.Getenv("REFRESH_COOKIE_SAMESITE")) {
+	case "", "lax":
+		cfg.SameSite = http.SameSiteLaxMode
+	case "strict":
+		cfg.SameSite = http.SameSiteStrictMode
+	case "none":
+		if !cfg.Secure {
+			return cfg, errors.New("REFRESH_COOKIE_SAMESITE=none requires REFRESH_COOKIE_SECURE=true")
+		}
+		cfg.SameSite = http.SameSiteNoneMode
+	default:
+		return cfg, errors.New("REFRESH_COOKIE_SAMESITE must be lax, strict or none")
+	}
+	return cfg, nil
 }
