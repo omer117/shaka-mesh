@@ -20,6 +20,10 @@ func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware
 	if allowedOrigin == "" {
 		return nil, errors.New("CORS allowed origin is required")
 	}
+	// Credentialed CORS (cookies) is incompatible with a wildcard origin.
+	if allowedOrigin == "*" {
+		return nil, errors.New("CORS allowed origin must be an explicit origin, not '*'")
+	}
 	authProxy := newProxy(authTarget, true)
 	beachProxy := newProxy(beachTarget, false)
 	communityProxy := newProxy(communityTarget, false)
@@ -49,7 +53,8 @@ func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware
 			w.Header().Add("Vary", "Origin")
 			if origin == allowedOrigin {
 				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
 				w.Header().Set("Access-Control-Max-Age", "600")
 			}

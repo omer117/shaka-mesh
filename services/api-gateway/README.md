@@ -17,7 +17,12 @@ community-service as `X-Authenticated-User-ID` and
 `X-Authenticated-User-Email`.
 
 The browser CORS origin is configured with `CORS_ALLOWED_ORIGIN` (defaults to
-`http://localhost:3000`). The notification service's SSE endpoint is available
+`http://localhost:3000`). It must be one explicit origin; `*` is rejected at
+startup because the gateway answers with `Access-Control-Allow-Credentials:
+true` (needed for the HttpOnly refresh cookie). Allowed methods are `GET, POST,
+PATCH, DELETE, OPTIONS`. `Set-Cookie` and `Cookie` headers pass through the
+`/api/v1/auth/*` proxy untouched, so `POST /auth/refresh` and `/auth/logout`
+work with the cookie set by auth-service. The notification service's SSE endpoint is available
 directly at `http://localhost:8082/events`.
 
 For local full-stack startup, set a random secret of at least 32 bytes before
