@@ -36,3 +36,21 @@ authenticated mutations. Product and forum reads are public.
 ## Tests
 
 Run `go test ./...` and `go vet ./...` from this directory.
+
+### Integration tests
+
+Repository integration tests run against a real PostGIS database started with
+`testcontainers-go` (image `postgis/postgis:16-3.4`). They cover the shop
+checkout transaction (stock decreases, order created, cart emptied, full
+rollback when a line is short), a concurrent checkout for the last unit that
+must never oversell, and the forum queries. They sit behind the `integration`
+build tag, so plain `go test ./...` stays fast and needs no Docker. To run them,
+start Docker and run:
+
+```bash
+go test -tags=integration ./...
+```
+
+The container is initialised with `deployments/init_db.sql` (which provides the
+shared `users` table), then the service's own `Migrate` is applied, as at
+startup.
