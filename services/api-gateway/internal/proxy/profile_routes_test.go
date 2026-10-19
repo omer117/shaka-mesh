@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/omer-asraf/shaka-api-gateway/internal/authn"
+	"github.com/omer-asraf/shaka-api-gateway/internal/authn/authntest"
 )
 
 func TestProfileAndMediaRoutes(t *testing.T) {
@@ -23,8 +24,8 @@ func TestProfileAndMediaRoutes(t *testing.T) {
 	defer upstream.Close()
 	other, _ := url.Parse("http://127.0.0.1:1")
 	authURL, _ := url.Parse(upstream.URL)
-	secret := "0123456789abcdef0123456789abcdef"
-	mw, err := authn.NewMiddleware(secret, "test-issuer")
+	signer := authntest.NewSigner(t, "kid-1")
+	mw, err := authn.NewMiddleware(signer.Keys(), "test-issuer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,16 +33,13 @@ func TestProfileAndMediaRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, authn.Claims{
+	token := signer.Token(t, authn.Claims{
 		UserID: "user-7", Email: "a@b.c",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: "test-issuer", Subject: "user-7",
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
 		},
-	}).SignedString([]byte(secret))
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	tests := []struct {
 		name       string
@@ -94,7 +92,7 @@ func TestProfileAndMediaRoutes(t *testing.T) {
 
 func TestCORSAllowsPatch(t *testing.T) {
 	u, _ := url.Parse("http://localhost:1")
-	mw, _ := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	mw, _ := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	handler, _ := NewHandler(u, u, u, mw, "http://localhost:3000")
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/me", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
