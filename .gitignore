@@ -24,6 +24,8 @@ yarn-error.log*
 .env.local
 .env.*.local
 /sshk.key
+deployments/secrets/
+*.pem
 
 # Docker & Databases
 deployments/beach_db_data/

@@ -87,7 +87,6 @@ From Git Bash at the repository root, run the E2E audit using the same token
 for the service and script:
 
 ```bash
-export JWT_SECRET="$(openssl rand -hex 32)"
 export E2E_ALERT_TEST_TOKEN="$(openssl rand -hex 32)"
 docker compose -f deployments/docker-compose.yml up -d --build --no-deps --force-recreate beach-service
 bash scripts/test-e2e.sh
@@ -95,9 +94,8 @@ unset E2E_ALERT_TEST_TOKEN
 docker compose -f deployments/docker-compose.yml up -d --no-deps --force-recreate beach-service
 ```
 
-The JWT secret is only needed by Compose for variable interpolation here; the
-command recreates only beach-service and does not change the running auth or
-gateway secret. The final command recreates beach-service without the
+The command recreates only beach-service and does not touch the running auth
+or gateway containers. The final command recreates beach-service without the
 test-only route enabled. The script requires Docker, `curl`, Node.js, and npm;
 it creates and removes a temporary test account.
 
