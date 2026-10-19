@@ -25,6 +25,8 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@beach-db:5432/${POSTGRES_DB:-shaka_beach_db}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in deployments/.env}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:?Set CORS_ALLOWED_ORIGIN in deployments/.env}
+      REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-true}
+      REFRESH_COOKIE_SAMESITE: ${REFRESH_COOKIE_SAMESITE:-lax}
 
   notification-service:
     environment:
