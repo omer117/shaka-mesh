@@ -19,7 +19,9 @@ trust the identity headers below).
 
 Public reads include beach `GET` requests, `GET /api/v1/shop/products`, and
 forum category/thread `GET` requests. Auth routes under `/api/v1/auth/` are
-public. Mutating beach, shop, cart, and forum operations require an unexpired
+public, as is `GET /media/avatars/*` (avatar images are plain `<img>` loads
+and cannot send a token). `/api/v1/me` and `/api/v1/me/avatar` (profile, proxied
+to auth-service as `/me` and `/me/avatar`) require a JWT. Mutating beach, shop, cart, and forum operations require an unexpired
 JWT signed with RS256 by auth-service (tokens using any other algorithm, such as HS256 or `none`, or with a missing or unknown `kid`, are rejected). Verified `user_id` and `email` claims
 are added to the request context and forwarded to beach-service and
 community-service as `X-Authenticated-User-ID` and
