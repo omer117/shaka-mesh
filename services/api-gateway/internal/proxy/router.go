@@ -13,7 +13,24 @@ import (
 	"github.com/omer-asraf/shaka-api-gateway/internal/authn"
 )
 
-func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware *authn.Middleware, allowedOrigin string) (http.Handler, error) {
+// Option customizes the gateway handler.
+type Option func(*options)
+
+type options struct {
+	authLimiter func(http.Handler) http.Handler
+}
+
+// WithAuthRateLimit wraps the routes (inside the CORS layer, so 429 responses
+// still carry CORS headers) with brute-force protection middleware.
+func WithAuthRateLimit(middleware func(http.Handler) http.Handler) Option {
+	return func(o *options) { o.authLimiter = middleware }
+}
+
+func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware *authn.Middleware, allowedOrigin string, opts ...Option) (http.Handler, error) {
+	var settings options
+	for _, opt := range opts {
+		opt(&settings)
+	}
 	if authTarget == nil || beachTarget == nil || communityTarget == nil {
 		return nil, errors.New("auth, beach, and community upstream URLs are required")
 	}
@@ -48,6 +65,9 @@ func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware
 		return nil, errors.New("JWT middleware is required")
 	}
 	authenticatedRoutes := jwtMiddleware.Wrap(routes)
+	if settings.authLimiter != nil {
+		authenticatedRoutes = settings.authLimiter(authenticatedRoutes)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			w.Header().Add("Vary", "Origin")

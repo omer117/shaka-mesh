@@ -32,6 +32,8 @@ services:
     environment:
       AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:?Set CORS_ALLOWED_ORIGIN in deployments/.env}
+      # Exactly one reverse proxy (Caddy, which overwrites X-Forwarded-For) sits in front.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
     ports: !reset []
 
   community-service:

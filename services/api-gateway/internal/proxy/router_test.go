@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/omer-asraf/shaka-api-gateway/internal/authn"
+	"github.com/omer-asraf/shaka-api-gateway/internal/ratelimit"
 )
 
 func TestRouterForwardsAuthAndBeachRequests(t *testing.T) {
@@ -243,5 +245,45 @@ func TestRouterForwardsRefreshCookieBothWays(t *testing.T) {
 	cookies := response.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Value != "rotated" || !cookies[0].HttpOnly {
 		t.Fatalf("Set-Cookie was not forwarded intact: %+v", cookies)
+	}
+}
+
+func TestRouterRateLimitsLoginAndKeepsCORSHeadersOn429(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer authServer.Close()
+	authURL, _ := url.Parse(authServer.URL)
+	other, _ := url.Parse("http://localhost:1")
+	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	if err != nil {
+		t.Fatalf("create middleware: %v", err)
+	}
+	limiter := ratelimit.AuthMiddleware(ratelimit.AuthConfig{
+		IP:    ratelimit.NewTokenBucket(ratelimit.PerMinute(1, 1)),
+		Email: ratelimit.NewTokenBucket(ratelimit.PerMinute(10, 10)),
+	})
+	handler, err := NewHandler(authURL, other, other, jwtMiddleware, "http://localhost:3000", WithAuthRateLimit(limiter))
+	if err != nil {
+		t.Fatalf("create gateway handler: %v", err)
+	}
+	send := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+			strings.NewReader(`{"email":"a@b.co","password":"x"}`))
+		request.Header.Set("Origin", "http://localhost:3000")
+		request.RemoteAddr = "203.0.113.5:4000"
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	if first := send(); first.Code != http.StatusUnauthorized {
+		t.Fatalf("first attempt should reach auth-service, got %d", first.Code)
+	}
+	second := send()
+	if second.Code != http.StatusTooManyRequests || second.Header().Get("Retry-After") == "" {
+		t.Fatalf("expected 429 with Retry-After, got %d %v", second.Code, second.Header())
+	}
+	if second.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
+		t.Fatal("429 must carry CORS headers so the browser can read it")
 	}
 }
