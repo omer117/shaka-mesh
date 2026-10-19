@@ -22,6 +22,8 @@ npm.cmd run dev
 The default API gateway URL is `http://localhost:8000`, and the live swell
 event stream defaults to `http://localhost:8082/events`. `NEXT_PUBLIC_API_BASE_URL`
 and `NEXT_PUBLIC_NOTIFICATION_BASE_URL` can override these defaults.
+Production builds default both URLs to `https://151.145.82.171.nip.io` when
+the corresponding environment variables are not set.
 
 Create an account or sign in before adding items to the bag or posting in the
 forum. The demo checkout creates a saved order and updates inventory, but does
