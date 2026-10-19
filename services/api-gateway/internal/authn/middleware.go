@@ -95,6 +95,11 @@ func isPublic(r *http.Request) bool {
 	if r.URL.Path == jwksPath && r.Method == http.MethodGet {
 		return true
 	}
+	// Avatars are plain <img> loads, which cannot send an Authorization header.
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		strings.HasPrefix(r.URL.Path, "/media/avatars/") {
+		return true
+	}
 	if r.Method == http.MethodGet &&
 		(r.URL.Path == "/api/v1/beaches" || strings.HasPrefix(r.URL.Path, "/api/v1/beaches/")) {
 		return true

@@ -48,8 +48,15 @@ func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware
 		switch {
 		case r.URL.Path == "/health" && r.Method == http.MethodGet:
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/"),
-			r.URL.Path == "/.well-known/jwks.json" && r.Method == http.MethodGet:
+		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/"):
+			attachIdentity(r) // drops any client-forged identity headers
+			authProxy.ServeHTTP(w, r)
+		case r.URL.Path == "/.well-known/jwks.json" && r.Method == http.MethodGet:
+			authProxy.ServeHTTP(w, r)
+		case isProfileRoute(r.URL.Path), isMediaRoute(r):
+			// Profile endpoints are JWT-protected; /media/avatars is public
+			// (see authn.isPublic). Both are served by auth-service.
+			attachIdentity(r)
 			authProxy.ServeHTTP(w, r)
 		case r.URL.Path == "/api/v1/beaches" || strings.HasPrefix(r.URL.Path, "/api/v1/beaches/"):
 			attachIdentity(r)
@@ -112,12 +119,23 @@ func isKnownRoute(r *http.Request) bool {
 	}
 	return strings.HasPrefix(r.URL.Path, "/api/v1/auth/") ||
 		r.URL.Path == "/.well-known/jwks.json" ||
+		isProfileRoute(r.URL.Path) ||
+		isMediaRoute(r) ||
 		r.URL.Path == "/api/v1/beaches" ||
 		strings.HasPrefix(r.URL.Path, "/api/v1/beaches/") ||
 		r.URL.Path == "/api/v1/shop" ||
 		strings.HasPrefix(r.URL.Path, "/api/v1/shop/") ||
 		r.URL.Path == "/api/v1/forum" ||
 		strings.HasPrefix(r.URL.Path, "/api/v1/forum/")
+}
+
+func isProfileRoute(path string) bool {
+	return path == "/api/v1/me" || path == "/api/v1/me/avatar"
+}
+
+func isMediaRoute(r *http.Request) bool {
+	return (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		strings.HasPrefix(r.URL.Path, "/media/avatars/")
 }
 
 func newProxy(target *url.URL, stripAPIPrefix bool) *httputil.ReverseProxy {
