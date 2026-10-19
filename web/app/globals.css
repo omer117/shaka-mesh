@@ -1366,6 +1366,15 @@ button {
   line-height: 1.5;
 }
 
+.dialog-error p {
+  margin: 0;
+}
+
+.dialog-error ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
 .dialog-switch {
   margin: 19px 0 0;
   color: #899694;
