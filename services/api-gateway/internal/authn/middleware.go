@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -20,19 +19,26 @@ type Claims struct {
 
 type contextKey struct{}
 
+// jwksPath is where the gateway republishes auth-service's public keys so
+// other services (and the outside world) can verify tokens too.
+const jwksPath = "/.well-known/jwks.json"
+
+// Middleware verifies RS256 access tokens with auth-service's public keys. The
+// gateway never holds a signing secret: it cannot mint tokens, and a leak of
+// the gateway reveals nothing that lets an attacker forge one.
 type Middleware struct {
-	secret []byte
+	keys   KeySource
 	issuer string
 }
 
-func NewMiddleware(secret, issuer string) (*Middleware, error) {
-	if len(secret) < 32 {
-		return nil, errors.New("JWT_SECRET must be at least 32 bytes")
+func NewMiddleware(keys KeySource, issuer string) (*Middleware, error) {
+	if keys == nil {
+		return nil, errors.New("JWT key source is required")
 	}
 	if strings.TrimSpace(issuer) == "" {
 		return nil, errors.New("JWT_ISSUER must not be empty")
 	}
-	return &Middleware{secret: []byte(secret), issuer: issuer}, nil
+	return &Middleware{keys: keys, issuer: issuer}, nil
 }
 
 func (m *Middleware) Wrap(next http.Handler) http.Handler {
@@ -62,11 +68,9 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 func (m *Middleware) parse(rawToken string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(rawToken, claims, func(token *jwt.Token) (any, error) {
-		if token.Method != jwt.SigningMethodHS256 {
-			return nil, fmt.Errorf("unexpected JWT signing method %q", token.Method.Alg())
-		}
-		return m.secret, nil
-	}, jwt.WithIssuer(m.issuer), jwt.WithExpirationRequired())
+		kid, _ := token.Header["kid"].(string)
+		return m.keys.Key(kid)
+	}, jwt.WithValidMethods([]string{"RS256"}), jwt.WithIssuer(m.issuer), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +90,9 @@ func isPublic(r *http.Request) bool {
 		return true
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/auth/") {
+		return true
+	}
+	if r.URL.Path == jwksPath && r.Method == http.MethodGet {
 		return true
 	}
 	if r.Method == http.MethodGet &&

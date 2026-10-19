@@ -48,7 +48,8 @@ func NewHandler(authTarget, beachTarget, communityTarget *url.URL, jwtMiddleware
 		switch {
 		case r.URL.Path == "/health" && r.Method == http.MethodGet:
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/"):
+		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/"),
+			r.URL.Path == "/.well-known/jwks.json" && r.Method == http.MethodGet:
 			authProxy.ServeHTTP(w, r)
 		case r.URL.Path == "/api/v1/beaches" || strings.HasPrefix(r.URL.Path, "/api/v1/beaches/"):
 			attachIdentity(r)
@@ -110,6 +111,7 @@ func isKnownRoute(r *http.Request) bool {
 		return r.Method == http.MethodGet
 	}
 	return strings.HasPrefix(r.URL.Path, "/api/v1/auth/") ||
+		r.URL.Path == "/.well-known/jwks.json" ||
 		r.URL.Path == "/api/v1/beaches" ||
 		strings.HasPrefix(r.URL.Path, "/api/v1/beaches/") ||
 		r.URL.Path == "/api/v1/shop" ||
