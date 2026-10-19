@@ -5,9 +5,24 @@ rotation.
 
 ## Configuration
 
-The service requires `DATABASE_URL` and `JWT_SECRET`. The signing secret must
-be at least 32 bytes. `JWT_ISSUER` defaults to `shaka-mesh-auth`, `JWT_TTL`
-defaults to `15m`, and `HTTP_ADDR` defaults to `:8081`.
+The service requires `DATABASE_URL`. `JWT_ISSUER` defaults to `shaka-mesh-auth`,
+`JWT_TTL` defaults to `15m`, and `HTTP_ADDR` defaults to `:8081`.
+
+Access tokens are signed with **RS256**. Provide the key as a PEM (PKCS#8 or
+PKCS#1, RSA, at least 2048 bits):
+
+| Variable | Meaning |
+| --- | --- |
+| `JWT_PRIVATE_KEY_FILE` | Path to the signing key PEM (wins over the inline variable). |
+| `JWT_PRIVATE_KEY` | The PEM inline; literal `\n` sequences are accepted so it fits on one line. |
+| `JWT_PREVIOUS_PUBLIC_KEYS_FILE` / `JWT_PREVIOUS_PUBLIC_KEYS` | Retired public key(s) (PEM) that stay published during a rotation. |
+
+If no signing key is configured, the service **generates an ephemeral key at
+startup and logs a warning**: fine for local development, but every token dies
+on restart and replicas would disagree, so production must configure a key.
+Generate one with
+`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt_private.pem`
+and never commit it.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -48,6 +63,28 @@ minimum can still sign in; they are only checked for being non-empty and at most
 Login failures return the same generic `401` response. The gateway rate-limits
 login and register (see the api-gateway README).
 
+## Signing keys, JWKS and rotation
+
+`GET /.well-known/jwks.json` returns the public keys (`kty`, `use`, `alg`, `kid`,
+`n`, `e`; never private parameters) with `Cache-Control: public, max-age=300`.
+The gateway republishes it at the same path. The `kid` is the RFC 7638
+thumbprint of the public key, so it is derived, identical on every replica and
+needs no configuration. Every token carries `alg: RS256` and its `kid` header.
+
+Verifiers (the api-gateway) fetch the JWKS, cache it, and re-fetch when they
+see an unknown `kid`, so a rotation needs no gateway restart:
+
+1. Generate a new key pair.
+2. Set `JWT_PRIVATE_KEY(_FILE)` to the **new** key and list the **old** key's
+   public part in `JWT_PREVIOUS_PUBLIC_KEYS(_FILE)`. Restart auth-service. New
+   tokens use the new `kid`; tokens signed with the old key still verify.
+3. After at least one access-token lifetime (15 minutes) plus the gateway's JWKS
+   cache (5 minutes), remove the previous key and restart again.
+
+Refresh tokens are opaque database records, not JWTs, so rotating the signing
+key never logs anyone out: clients just receive a token signed by the new key
+on their next refresh.
+
 ## Refresh tokens
 
 - A refresh token is 256 random bits, base64url-encoded. Only its SHA-256 hash
@@ -70,10 +107,13 @@ sequenceDiagram
     B->>G: POST /api/v1/auth/login {email, password}
     G->>A: POST /auth/login
     A->>DB: verify bcrypt hash, INSERT refresh_tokens (family F, hash h1)
-    A-->>B: 200 {access_token} + Set-Cookie shaka_refresh=r1 (HttpOnly)
+    A-->>B: 200 {access_token RS256, kid} + Set-Cookie shaka_refresh=r1 (HttpOnly)
     Note over B: access token kept in memory only
 
     B->>G: API calls with Authorization: Bearer access_token
+    G->>A: GET /.well-known/jwks.json (first use, unknown kid, or cache older than 5 min)
+    A-->>G: public keys
+    Note over G: verifies signature with the public key selected by kid
     Note over B: ~30s before expiry (or on page reload)
     B->>G: POST /api/v1/auth/refresh (cookie r1)
     G->>A: POST /auth/refresh (cookie r1)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"log"
@@ -30,9 +31,9 @@ func run() error {
 	if databaseURL == "" {
 		return errors.New("DATABASE_URL must be set")
 	}
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		return errors.New("JWT_SECRET must be set")
+	keys, err := loadKeySet()
+	if err != nil {
+		return err
 	}
 	issuer := os.Getenv("JWT_ISSUER")
 	if issuer == "" {
@@ -42,7 +43,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	tokenManager, err := service.NewJWTManager(jwtSecret, issuer, tokenTTL)
+	tokenManager, err := service.NewJWTManager(keys, issuer, tokenTTL)
 	if err != nil {
 		return err
 	}
@@ -78,7 +79,7 @@ func run() error {
 	)
 	server := &http.Server{
 		Addr:              address,
-		Handler:           handler.New(authService, cookies),
+		Handler:           handler.New(authService, cookies, tokenManager),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -118,6 +119,57 @@ func durationEnv(name, fallback string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a positive duration", name)
 	}
 	return duration, nil
+}
+
+// loadKeySet builds the RS256 key set from the environment:
+//
+//	JWT_PRIVATE_KEY / JWT_PRIVATE_KEY_FILE         active signing key (PEM; the file wins if both are set)
+//	JWT_PREVIOUS_PUBLIC_KEYS / ..._FILE            retired public keys (PEM, one or more) kept published
+//	                                               for one access-token lifetime after a rotation
+//
+// With no signing key configured a throw-away key is generated so local
+// development works out of the box, loudly, because such tokens die on restart.
+func loadKeySet() (*service.KeySet, error) {
+	privatePEM, err := textFromEnv("JWT_PRIVATE_KEY", "JWT_PRIVATE_KEY_FILE")
+	if err != nil {
+		return nil, err
+	}
+	previousPEM, err := textFromEnv("JWT_PREVIOUS_PUBLIC_KEYS", "JWT_PREVIOUS_PUBLIC_KEYS_FILE")
+	if err != nil {
+		return nil, err
+	}
+	if privatePEM == "" {
+		if previousPEM != "" {
+			return nil, errors.New("JWT_PREVIOUS_PUBLIC_KEYS requires JWT_PRIVATE_KEY or JWT_PRIVATE_KEY_FILE")
+		}
+		log.Print("WARNING: no JWT_PRIVATE_KEY or JWT_PRIVATE_KEY_FILE configured; generated an ephemeral RSA signing key. " +
+			"Access tokens become invalid when this service restarts and replicas will not agree. Do not use in production.")
+		return service.GenerateKeySet()
+	}
+	signing, err := service.ParsePrivateKeyPEM(privatePEM)
+	if err != nil {
+		return nil, fmt.Errorf("JWT private key: %w", err)
+	}
+	var previous []*rsa.PublicKey
+	if previousPEM != "" {
+		if previous, err = service.ParsePublicKeysPEM(previousPEM); err != nil {
+			return nil, fmt.Errorf("JWT previous public keys: %w", err)
+		}
+	}
+	return service.NewKeySet(signing, previous...)
+}
+
+// textFromEnv returns the value of inline, or the contents of the file named by
+// fileVar (which takes precedence). Both unset yields "".
+func textFromEnv(inline, fileVar string) (string, error) {
+	if path := os.Getenv(fileVar); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", fileVar, err)
+		}
+		return string(raw), nil
+	}
+	return os.Getenv(inline), nil
 }
 
 // cookieConfigFromEnv reads the refresh-cookie settings. Secure defaults to
