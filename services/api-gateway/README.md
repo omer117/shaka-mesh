@@ -39,5 +39,8 @@ $env:JWT_SECRET = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInv
 docker compose -f deployments\docker-compose.yml up --build
 ```
 
-The gateway is exposed on `http://localhost:8000`. The shared Compose network
-keeps backend service ports internal.
+The gateway is exposed on `http://localhost:8000`. The auth, beach and
+community services are reachable only on the shared Compose network. The local
+Compose file also publishes the notification service (`8082`), PostgreSQL
+(`5433`) and RabbitMQ (`5672`, `15672`) to the host; the cloud overlay publishes
+none of these.
