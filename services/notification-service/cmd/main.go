@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	maxReconnectDelay = 30 * time.Second
-	shutdownTimeout   = 10 * time.Second
+	shutdownTimeout = 10 * time.Second
 )
 
 func main() {
@@ -67,7 +66,7 @@ func run() error {
 
 	consumerDone := make(chan error, 1)
 	go func() {
-		consumerDone <- runConsumer(ctx, notificationConsumer)
+		consumerDone <- notificationConsumer.RunWithReconnect(ctx)
 	}()
 	serverDone := make(chan error, 1)
 	go func() {
@@ -110,35 +109,4 @@ func run() error {
 		return runErr
 	}
 	return nil
-}
-
-func runConsumer(ctx context.Context, notificationConsumer *consumer.Consumer) error {
-	delay := time.Second
-	for {
-		err := notificationConsumer.Run(ctx)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if err == nil {
-			return nil
-		}
-		log.Printf("notification consumer stopped unexpectedly: %v; reconnecting in %s", err, delay)
-
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return nil
-		case <-timer.C:
-		}
-		delay *= 2
-		if delay > maxReconnectDelay {
-			delay = maxReconnectDelay
-		}
-	}
 }
