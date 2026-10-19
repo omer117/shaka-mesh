@@ -58,3 +58,11 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON refresh_tokens (family_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens (expires_at);
+
+-- 7. User profile columns (display name, bio, home beach, avatar)
+-- home_beach_id is validated against beach-service by auth-service, so there
+-- is deliberately no foreign key to keep the services decoupled.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(200) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_beach_id VARCHAR(36);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
