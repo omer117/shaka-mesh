@@ -1,7 +1,7 @@
 # Auth Service
 
-Provides account registration, JWT access-token issuance, and refresh-token
-rotation.
+Provides account registration, JWT access-token issuance, refresh-token
+rotation and user profiles.
 
 ## Configuration
 
@@ -138,18 +138,56 @@ sequenceDiagram
 When run directly, the database schema in `deployments/init_db.sql` must
 already have been applied. Existing database volumes do not rerun initialization
 scripts; apply the migrations in `deployments/migrations/` in order
-(`001_create_users.sql`, then `002_create_refresh_tokens.sql`) to those
-databases before starting the service. Both are idempotent
+(`001_create_users.sql`, then `002_create_refresh_tokens.sql`, then `003_user_profile.sql`) to those
+databases before starting the service. All are idempotent
 (`CREATE ... IF NOT EXISTS`):
 
 ```sh
 docker compose -f deployments/docker-compose.yml exec -T beach-db \
-  psql -U shaka_user -d shaka_beach_db < deployments/migrations/002_create_refresh_tokens.sql
+  psql -U shaka_user -d shaka_beach_db < deployments/migrations/003_user_profile.sql
 ```
+(run the same command with each migration you are missing)
 
 Expired and revoked rows are not purged automatically yet (see the follow-ups
 in the PR); a periodic `DELETE FROM refresh_tokens WHERE expires_at < now()`
 is safe.
+
+## Profiles and avatars
+
+The `internal/profile` package (domain, repository, service, handler) adds
+profile fields to `users`: `display_name` (max 50 chars), `bio` (max 500),
+`home_beach_id` (must exist in beach-service) and `avatar_url`.
+
+| Method and path | Purpose |
+| --------------- | ------- |
+| `GET /me` | Current user's profile |
+| `PATCH /me` | Partial update of `display_name`, `bio`, `home_beach_id` (empty string clears). Unknown fields such as `id`, `email` or `avatar_url` are rejected with `400` |
+| `POST /me/avatar` | `multipart/form-data`, field `avatar` |
+| `GET /media/avatars/{id}.jpg` | Serves a stored avatar with `Cache-Control: public, max-age=31536000, immutable` |
+
+Through the gateway these are `/api/v1/me`, `/api/v1/me/avatar` and
+`/media/avatars/{id}.jpg`. The profile endpoints identify the caller only by the
+`X-Authenticated-User-ID` header that the gateway sets from the verified JWT;
+there is no user ID in the URL or body, so a user can only ever edit their own
+profile. A missing header returns `401`.
+
+Avatar uploads accept JPEG, PNG and WebP up to 2 MB. The real type is detected
+from the file bytes (the part's `Content-Type` is ignored): other types return
+`415`, oversize files `413`, undecodable or absurdly large canvases `400`. The
+image is decoded, center-cropped, resized to 256x256, flattened on white and
+re-encoded as JPEG, which drops EXIF/GPS data. Output is JPEG rather than WebP
+because there is no pure-Go WebP encoder (`golang.org/x/image/webp` only
+decodes) and cgo is avoided. Files get random 32-hex names and the store only
+accepts that exact shape, so user input never reaches the filesystem path.
+
+Configuration: `AVATAR_STORAGE_DIR` (default `./data/avatars`; Compose mounts
+the `avatar_data` volume at `/data/avatars`) and `BEACH_SERVICE_URL` (default
+`http://localhost:8080`, used to validate `home_beach_id`). Storage sits behind
+the `BlobStore` interface; a local-disk implementation exists today and an OCI
+Object Storage one is a TODO.
+
+Existing databases need `deployments/migrations/003_user_profile.sql` (see
+below).
 
 ## Tests
 

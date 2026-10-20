@@ -58,7 +58,7 @@ Go microservices architecture built with PostgreSQL/PostGIS, RabbitMQ, and a Nex
 
 - הדפדפן מדבר רק עם ה-Gateway (REST) ועם Notification Service (SSE, `GET /events`). בענן שניהם מאחורי Caddy.
 - ה-Gateway לא ניגש למסד הנתונים ואינו מפרסם אירועים.
-- השירותים לא קוראים זה לזה. הקשר היחיד בין שירותים הוא אירוע `SwellAlertEvent` דרך RabbitMQ.
+- השירותים כמעט לא קוראים זה לזה. הקשר העיקרי בין שירותים הוא אירוע `SwellAlertEvent` דרך RabbitMQ. החריג היחיד: `auth-service` קורא ל-`GET /api/v1/beaches/{id}` ב-`beach-service` (HTTP פנימי) כדי לאמת `home_beach_id` בעדכון פרופיל.
 
 ---
 
@@ -76,9 +76,9 @@ Go microservices architecture built with PostgreSQL/PostGIS, RabbitMQ, and a Nex
 | `edge` (Caddy) | 80 / 443 | cloud overlay only | TLS and routing |
 
 1. **API Gateway (Go, `:8000`):**
-   - שער הכניסה היחיד ל-REST. ניתוב (Reverse Proxy) על פי קידומת: `/api/v1/auth/*` ל-auth, `/api/v1/beaches*` ל-beach, `/api/v1/shop*` ו-`/api/v1/forum*` ל-community.
+   - שער הכניסה היחיד ל-REST. ניתוב (Reverse Proxy) על פי קידומת: `/api/v1/auth/*`, `/api/v1/me*` ו-`/media/avatars/*` ל-auth, `/api/v1/beaches*` ל-beach, `/api/v1/shop*` ו-`/api/v1/forum*` ל-community.
    - מאמת JWT חתום ב-HS256 (סוד משותף `JWT_SECRET`, `JWT_ISSUER`) ומעביר `X-Authenticated-User-ID` ו-`X-Authenticated-User-Email` לשירותים.
-   - Public: `/health`, כל `/api/v1/auth/*`, `GET` של חופים, `GET /api/v1/shop/products`, וקריאות `GET` של הפורום. כל השאר דורש Bearer token.
+   - Public: `/health`, כל `/api/v1/auth/*`, `GET` של חופים, `GET /api/v1/shop/products`, קריאות `GET` של הפורום, ו-`GET /media/avatars/*` (תמונות פרופיל). כל השאר, כולל `/api/v1/me*`, דורש Bearer token.
    - מגדיר CORS לפי `CORS_ALLOWED_ORIGIN`.
 
 2. **Auth Service (Go, `:8081`):**
@@ -86,6 +86,8 @@ Go microservices architecture built with PostgreSQL/PostGIS, RabbitMQ, and a Nex
    - סיסמאות נשמרות כ-**bcrypt** (אורך 8-72 בתים). אימייל כפול מחזיר `409`.
    - מנפיק **JWT access token קצר-מועד בלבד** (HS256, ברירת מחדל `JWT_TTL=15m`). אין refresh tokens ואין logout בצד השרת.
    - טבלת `users` ב-PostgreSQL.
+   - **פרופיל** (חבילה `internal/profile`): `GET /me`, `PATCH /me` (`display_name`, `bio`, `home_beach_id`), `POST /me/avatar` (multipart). דרך ה-Gateway: `/api/v1/me`, `/api/v1/me/avatar`. הזהות נלקחת רק מ-`X-Authenticated-User-ID` (מה-JWT), אף פעם לא מגוף הבקשה או מה-URL.
+   - **תמונות פרופיל:** JPEG/PNG/WebP עד 2MB, הסוג נקבע לפי ה-bytes, התמונה מפוענחת, נחתכת למרכז ל-256x256 ונשמרת מחדש כ-JPEG (מסיר EXIF/מיקום). נשמרת מאחורי ממשק `BlobStore` (כרגע דיסק מקומי, volume בשם `avatar_data`, `AVATAR_STORAGE_DIR`) בשם אקראי, ומוגשת ב-`GET /media/avatars/{id}.jpg` עם `Cache-Control: immutable`. TODO: מימוש OCI Object Storage.
 
 3. **Beach Service (Go + PostGIS, `:8080`):**
    - ניהול חופים: `GET /api/v1/beaches`, `/{id}`, `/nearby?lat&lon&radius_km` (`ST_DWithin`, `ST_Distance`), `/{id}/live-conditions`, ו-`POST /api/v1/beaches`.

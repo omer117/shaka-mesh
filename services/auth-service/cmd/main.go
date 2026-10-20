@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/omer-asraf/shaka-auth-service/internal/handler"
+	"github.com/omer-asraf/shaka-auth-service/internal/profile"
 	"github.com/omer-asraf/shaka-auth-service/internal/repository"
 	"github.com/omer-asraf/shaka-auth-service/internal/service"
 )
@@ -77,9 +78,16 @@ func run() error {
 		repository.NewPostgresRefreshTokenRepository(pool),
 		refreshTTL,
 	)
+	profileHandler, err := newProfileHandler(pool)
+	if err != nil {
+		return err
+	}
+	root := http.NewServeMux()
+	profileHandler.Register(root)
+	root.Handle("/", handler.New(authService, cookies, tokenManager))
 	server := &http.Server{
 		Addr:              address,
-		Handler:           handler.New(authService, cookies, tokenManager),
+		Handler:           root,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -107,6 +115,23 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+func newProfileHandler(pool *pgxpool.Pool) (*profile.Handler, error) {
+	avatarDir := os.Getenv("AVATAR_STORAGE_DIR")
+	if avatarDir == "" {
+		avatarDir = "./data/avatars"
+	}
+	beachURL := os.Getenv("BEACH_SERVICE_URL")
+	if beachURL == "" {
+		beachURL = "http://localhost:8080"
+	}
+	blobs, err := profile.NewLocalBlobStore(avatarDir)
+	if err != nil {
+		return nil, err
+	}
+	svc := profile.NewService(profile.NewPostgresRepository(pool), blobs, profile.NewHTTPBeachChecker(beachURL))
+	return profile.NewHandler(svc, blobs), nil
 }
 
 func durationEnv(name, fallback string) (time.Duration, error) {

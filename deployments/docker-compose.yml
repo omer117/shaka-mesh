@@ -94,6 +94,10 @@ services:
       REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-false}
       REFRESH_COOKIE_SAMESITE: ${REFRESH_COOKIE_SAMESITE:-lax}
       HTTP_ADDR: :8081
+      BEACH_SERVICE_URL: http://beach-service:8080
+      AVATAR_STORAGE_DIR: ${AVATAR_STORAGE_DIR:-/data/avatars}
+    volumes:
+      - avatar_data:/data/avatars
     expose:
       - "8081"
     volumes:
@@ -200,6 +204,7 @@ services:
       - shaka-network
 
 volumes:
+  avatar_data:
   beach_db_data:
   rabbitmq_data:
 

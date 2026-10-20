@@ -28,6 +28,9 @@ services:
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:?Set CORS_ALLOWED_ORIGIN in deployments/.env}
       REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-true}
       REFRESH_COOKIE_SAMESITE: ${REFRESH_COOKIE_SAMESITE:-lax}
+      AVATAR_STORAGE_DIR: ${AVATAR_STORAGE_DIR:-/data/avatars}
+    volumes:
+      - avatar_data:/data/avatars
 
   notification-service:
     environment:
@@ -68,5 +71,6 @@ services:
       - shaka-network
 
 volumes:
+  avatar_data:
   caddy_data:
   caddy_config:
