@@ -26,6 +26,12 @@ Content-Type: application/json
 
 @authToken = {{login.response.body.access_token}}
 
+### Refresh (the REST client keeps the shaka_refresh cookie from login)
+POST {{api}}/auth/refresh
+
+### Logout
+POST {{api}}/auth/logout
+
 ### Get All Beaches
 GET {{api}}/beaches
 

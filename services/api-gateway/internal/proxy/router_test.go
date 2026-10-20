@@ -166,10 +166,13 @@ func TestRouterAllowsConfiguredFrontendCORS(t *testing.T) {
 	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
 		t.Fatalf("unexpected CORS origin %q", got)
 	}
+	if got := response.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("expected credentialed CORS, got %q", got)
+	}
 	if got := response.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, Accept" {
 		t.Fatalf("unexpected allowed headers %q", got)
 	}
-	if got := response.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, DELETE, OPTIONS" {
+	if got := response.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, PATCH, DELETE, OPTIONS" {
 		t.Fatalf("unexpected allowed methods %q", got)
 	}
 }
@@ -196,5 +199,49 @@ func TestRouterRejectsUnconfiguredCORSOrigin(t *testing.T) {
 	}
 	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("unexpected CORS origin header %q", got)
+	}
+}
+
+func TestRouterRejectsWildcardCORSOrigin(t *testing.T) {
+	target, _ := url.Parse("http://localhost:8081")
+	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	if err != nil {
+		t.Fatalf("create middleware: %v", err)
+	}
+	if _, err := NewHandler(target, target, target, jwtMiddleware, "*"); err == nil {
+		t.Fatal("expected wildcard origin to be rejected")
+	}
+}
+
+func TestRouterForwardsRefreshCookieBothWays(t *testing.T) {
+	gotCookie := make(chan string, 1)
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("shaka_refresh"); err == nil {
+			gotCookie <- c.Value
+		}
+		http.SetCookie(w, &http.Cookie{Name: "shaka_refresh", Value: "rotated", Path: "/api/v1/auth", HttpOnly: true})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer authServer.Close()
+	authURL, _ := url.Parse(authServer.URL)
+	other, _ := url.Parse("http://localhost:1")
+	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	if err != nil {
+		t.Fatalf("create middleware: %v", err)
+	}
+	handler, err := NewHandler(authURL, other, other, jwtMiddleware, "http://localhost:3000")
+	if err != nil {
+		t.Fatalf("create gateway handler: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	request.AddCookie(&http.Cookie{Name: "shaka_refresh", Value: "old"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if got := <-gotCookie; got != "old" {
+		t.Fatalf("auth-service saw cookie %q", got)
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Value != "rotated" || !cookies[0].HttpOnly {
+		t.Fatalf("Set-Cookie was not forwarded intact: %+v", cookies)
 	}
 }

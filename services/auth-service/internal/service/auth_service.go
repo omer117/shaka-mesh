@@ -27,6 +27,7 @@ var ErrInvalidCredentials = errors.New("invalid email or password")
 type UserRepository interface {
 	Create(ctx context.Context, user *domain.User) error
 	GetByEmail(ctx context.Context, email string) (*domain.User, error)
+	GetByID(ctx context.Context, id string) (*domain.User, error)
 }
 
 type TokenIssuer interface {
@@ -34,12 +35,15 @@ type TokenIssuer interface {
 }
 
 type AuthService struct {
-	users  UserRepository
-	tokens TokenIssuer
+	users      UserRepository
+	tokens     TokenIssuer
+	refresh    RefreshTokenRepository
+	refreshTTL time.Duration
+	now        func() time.Time
 }
 
-func NewAuthService(users UserRepository, tokens TokenIssuer) *AuthService {
-	return &AuthService{users: users, tokens: tokens}
+func NewAuthService(users UserRepository, tokens TokenIssuer, refresh RefreshTokenRepository, refreshTTL time.Duration) *AuthService {
+	return &AuthService{users: users, tokens: tokens, refresh: refresh, refreshTTL: refreshTTL, now: time.Now}
 }
 
 func (s *AuthService) Register(ctx context.Context, email, password string) (*domain.User, error) {
@@ -66,26 +70,26 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*do
 	return user, nil
 }
 
-func (s *AuthService) Login(ctx context.Context, email, password string) (string, time.Time, error) {
+func (s *AuthService) Login(ctx context.Context, email, password string) (*Session, error) {
 	email, err := normalizeEmail(email)
 	if err != nil || !validPassword(password) {
-		return "", time.Time{}, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
 	user, err := s.users.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, repository.ErrUserNotFound) {
-			return "", time.Time{}, ErrInvalidCredentials
+			return nil, ErrInvalidCredentials
 		}
-		return "", time.Time{}, fmt.Errorf("load user: %w", err)
+		return nil, fmt.Errorf("load user: %w", err)
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return "", time.Time{}, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
-	token, expiresAt, err := s.tokens.Issue(user)
+	familyID, err := newUserID()
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("issue access token: %w", err)
+		return nil, fmt.Errorf("generate token family ID: %w", err)
 	}
-	return token, expiresAt, nil
+	return s.newSession(ctx, user, familyID)
 }
 
 func normalizeEmail(email string) (string, error) {

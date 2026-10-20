@@ -38,13 +38,30 @@ func (r *memoryUsers) GetByEmail(_ context.Context, _ string) (*domain.User, err
 	return &copy, nil
 }
 
-func TestRegisterAndLogin(t *testing.T) {
-	users := &memoryUsers{}
+func (r *memoryUsers) GetByID(_ context.Context, id string) (*domain.User, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.user == nil || r.user.ID != id {
+		return nil, repository.ErrUserNotFound
+	}
+	copy := *r.user
+	return &copy, nil
+}
+
+func newTestAuth(t *testing.T, users UserRepository) (*AuthService, *JWTManager, *memoryRefresh) {
+	t.Helper()
 	tokens, err := NewJWTManager("0123456789abcdef0123456789abcdef", "test-issuer", time.Minute)
 	if err != nil {
 		t.Fatalf("create JWT manager: %v", err)
 	}
-	auth := NewAuthService(users, tokens)
+	refresh := newMemoryRefresh()
+	return NewAuthService(users, tokens, refresh, time.Hour), tokens, refresh
+}
+
+func TestRegisterAndLogin(t *testing.T) {
+	users := &memoryUsers{}
+	auth, tokens, _ := newTestAuth(t, users)
 	user, err := auth.Register(context.Background(), "Surfer@Example.com", "correct horse battery")
 	if err != nil {
 		t.Fatalf("register user: %v", err)
@@ -56,11 +73,12 @@ func TestRegisterAndLogin(t *testing.T) {
 		t.Fatal("expected password to be stored as a hash")
 	}
 
-	rawToken, expiresAt, err := auth.Login(context.Background(), "SURFER@example.com", "correct horse battery")
+	session, err := auth.Login(context.Background(), "SURFER@example.com", "correct horse battery")
 	if err != nil {
 		t.Fatalf("login user: %v", err)
 	}
-	claims, err := tokens.Parse(rawToken)
+	expiresAt := session.ExpiresAt
+	claims, err := tokens.Parse(session.AccessToken)
 	if err != nil {
 		t.Fatalf("parse issued token: %v", err)
 	}
@@ -73,11 +91,7 @@ func TestRegisterAndLogin(t *testing.T) {
 }
 
 func TestRegisterRejectsInvalidEmailAndPassword(t *testing.T) {
-	tokens, err := NewJWTManager("0123456789abcdef0123456789abcdef", "test-issuer", time.Minute)
-	if err != nil {
-		t.Fatalf("create JWT manager: %v", err)
-	}
-	auth := NewAuthService(&memoryUsers{}, tokens)
+	auth, _, _ := newTestAuth(t, &memoryUsers{})
 	cases := []struct {
 		email    string
 		password string
@@ -94,12 +108,8 @@ func TestRegisterRejectsInvalidEmailAndPassword(t *testing.T) {
 }
 
 func TestLoginUsesGenericInvalidCredentialsError(t *testing.T) {
-	tokens, err := NewJWTManager("0123456789abcdef0123456789abcdef", "test-issuer", time.Minute)
-	if err != nil {
-		t.Fatalf("create JWT manager: %v", err)
-	}
-	auth := NewAuthService(&memoryUsers{}, tokens)
-	_, _, err = auth.Login(context.Background(), "missing@example.com", "correct horse battery")
+	auth, _, _ := newTestAuth(t, &memoryUsers{})
+	_, err := auth.Login(context.Background(), "missing@example.com", "correct horse battery")
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("expected generic invalid credentials error, got %v", err)
 	}

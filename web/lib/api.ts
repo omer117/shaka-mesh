@@ -125,6 +125,9 @@ async function request<T>(
     response = await fetch(`${apiBaseUrl}${path}`, {
       ...init,
       headers,
+      // The refresh-token cookie is HttpOnly and scoped to /api/v1/auth, so the
+      // browser only attaches it to auth requests; it must be sent cross-origin.
+      credentials: "include",
       cache: "no-store",
     });
   } catch {
@@ -161,14 +164,17 @@ export function registerUser(email: string, password: string): Promise<void> {
   });
 }
 
+interface TokenResponse {
+  access_token: string;
+  expires_at: string;
+  email?: string;
+}
+
 export async function loginUser(
   email: string,
   password: string,
 ): Promise<AuthSession> {
-  const result = await request<{
-    access_token: string;
-    expires_at: string;
-  }>("/api/v1/auth/login", {
+  const result = await request<TokenResponse>("/api/v1/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -176,8 +182,33 @@ export async function loginUser(
   return {
     accessToken: result.access_token,
     expiresAt: result.expires_at,
-    email,
+    email: result.email ?? email,
   };
+}
+
+/**
+ * Exchanges the HttpOnly refresh cookie for a new access token (and a rotated
+ * cookie). Resolves to null when there is no valid refresh cookie (401); other
+ * failures (network, 5xx) throw so callers can keep the user signed in and retry.
+ */
+export async function refreshSession(): Promise<AuthSession | null> {
+  try {
+    const result = await request<TokenResponse>("/api/v1/auth/refresh", {
+      method: "POST",
+    });
+    return {
+      accessToken: result.access_token,
+      expiresAt: result.expires_at,
+      email: result.email ?? "",
+    };
+  } catch (caught) {
+    if (caught instanceof ApiError && caught.status === 401) return null;
+    throw caught;
+  }
+}
+
+export function logoutUser(): Promise<void> {
+  return request<void>("/api/v1/auth/logout", { method: "POST" });
 }
 
 export function getBeaches(): Promise<Beach[]> {

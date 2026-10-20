@@ -81,6 +81,38 @@ production origin (for example, `https://your-project.vercel.app`) as
 `CORS_ALLOWED_ORIGIN` on the VM, then restart the backend stack so both the
 gateway and notification service apply it.
 
+## Upgrading an existing deployment (refresh tokens)
+
+`init_db.sql` only runs on an empty data directory, so an existing VM must
+create the `refresh_tokens` table by hand before restarting the new auth-service:
+
+```sh
+docker compose --env-file deployments/.env   -f deployments/docker-compose.yml -f deployments/docker-compose.cloud.yml   exec -T beach-db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'   < deployments/migrations/002_create_refresh_tokens.sql
+```
+
+The migration is idempotent. Then rebuild with the `up -d --build` command above.
+
+## Refresh-token cookie and Vercel
+
+Auth-service sets the refresh token as an `HttpOnly; Secure; SameSite=Lax`
+cookie (`REFRESH_COOKIE_*` in `.env`). A `*.vercel.app` page and a
+`*.nip.io` API are **different sites**, and browsers do not send `SameSite=Lax`
+cookies on cross-site `fetch` calls, so silent refresh would fail. Pick one:
+
+1. Same-origin proxy (recommended, keeps `Lax`): in the Vercel project set
+   `API_PROXY_TARGET=https://<reserved-public-ip>.nip.io` and
+   `NEXT_PUBLIC_API_BASE_URL=` (empty). The browser then calls
+   `/api/v1/...` on the Vercel origin and `web/next.config.ts` rewrites it to
+   the VM, so the cookie is first-party. `CORS_ALLOWED_ORIGIN` is then only used
+   for the SSE endpoint.
+2. Cross-site cookie: set `REFRESH_COOKIE_SAMESITE=none` in `deployments/.env`
+   (requires `REFRESH_COOKIE_SECURE=true`) and keep `NEXT_PUBLIC_API_BASE_URL`
+   pointing at the VM. Third-party-cookie blocking in some browsers (Safari,
+   Brave) can still break this.
+
+Neither option has been exercised against a real Vercel deployment from this
+change; verify after deploying.
+
 ## Local Compose safety
 
 The cloud overlay changes only the cloud deployment. The regular

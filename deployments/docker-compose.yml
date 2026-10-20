@@ -83,6 +83,11 @@ services:
       JWT_ISSUER: shaka-mesh-auth
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000}
       JWT_TTL: ${JWT_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-168h}
+      # Local compose is plain http; browsers drop Secure cookies there (Safari always,
+      # Chrome/Firefox allow localhost only). The cloud override sets this back to true.
+      REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-false}
+      REFRESH_COOKIE_SAMESITE: ${REFRESH_COOKIE_SAMESITE:-lax}
       HTTP_ADDR: :8081
     expose:
       - "8081"

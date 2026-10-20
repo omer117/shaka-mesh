@@ -24,6 +24,7 @@ import {
   type AuthSession,
   type Beach,
 } from "@/lib/api";
+import { useAuthSession } from "@/lib/use-auth-session";
 
 const SurfMap = dynamic(() => import("@/components/surf-map"), {
   ssr: false,
@@ -100,11 +101,15 @@ export default function ConditionsPage() {
   const [userLocation, setUserLocation] = useState<UserCoordinates | null>(null);
   const [error, setError] = useState("");
   const [locationMessage, setLocationMessage] = useState("");
-  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
-  const [authReady, setAuthReady] = useState(false);
+  const {
+    session: authSession,
+    ready: authReady,
+    notice: authNotice,
+    signIn,
+    signOut: handleSignOut,
+  } = useAuthSession();
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [suggestionDialogOpen, setSuggestionDialogOpen] = useState(false);
-  const [authNotice, setAuthNotice] = useState("");
   const [notificationStatus, setNotificationStatus] =
     useState<NotificationStatus>("connecting");
   const [swellAlert, setSwellAlert] = useState<SwellAlert | null>(null);
@@ -149,45 +154,6 @@ export default function ConditionsPage() {
       active = false;
     };
   }, [applyBeachResults]);
-
-  useEffect(() => {
-    let active = true;
-    Promise.resolve().then(() => {
-      if (!active) return;
-      try {
-        const saved = window.sessionStorage.getItem("shaka-auth-session");
-        if (saved) {
-          const parsed: unknown = JSON.parse(saved);
-          if (
-            typeof parsed === "object" &&
-            parsed !== null &&
-            "accessToken" in parsed &&
-            typeof parsed.accessToken === "string" &&
-            "expiresAt" in parsed &&
-            typeof parsed.expiresAt === "string" &&
-            "email" in parsed &&
-            typeof parsed.email === "string" &&
-            Date.parse(parsed.expiresAt) > Date.now()
-          ) {
-            setAuthSession({
-              accessToken: parsed.accessToken,
-              expiresAt: parsed.expiresAt,
-              email: parsed.email,
-            });
-          } else {
-            window.sessionStorage.removeItem("shaka-auth-session");
-          }
-        }
-      } catch {
-        setAuthNotice("Session storage is unavailable; you may need to sign in again.");
-      } finally {
-        setAuthReady(true);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     const events = new EventSource(`${notificationBaseUrl.replace(/\/+$/, "")}/events`);
@@ -235,36 +201,9 @@ export default function ConditionsPage() {
     return () => window.clearTimeout(timeout);
   }, [swellAlert]);
 
-  useEffect(() => {
-    if (!authSession) return;
-    const delay = Date.parse(authSession.expiresAt) - Date.now();
-    const timeout = window.setTimeout(() => {
-      window.sessionStorage.removeItem("shaka-auth-session");
-      setAuthSession(null);
-      setAuthNotice("Your session expired. Sign in to continue.");
-    }, Math.max(0, delay));
-    return () => window.clearTimeout(timeout);
-  }, [authSession]);
-
   const handleAuthenticated = (session: AuthSession) => {
-    setAuthSession(session);
+    signIn(session);
     setAuthDialogOpen(false);
-    setAuthNotice("");
-    try {
-      window.sessionStorage.setItem("shaka-auth-session", JSON.stringify(session));
-    } catch {
-      setAuthNotice("Signed in, but this browser could not save your session.");
-    }
-  };
-
-  const handleSignOut = () => {
-    setAuthSession(null);
-    setAuthNotice("");
-    try {
-      window.sessionStorage.removeItem("shaka-auth-session");
-    } catch {
-      setAuthNotice("Could not clear the saved session from this browser.");
-    }
   };
 
   const handleBeachCreated = (beach: Beach) => {
