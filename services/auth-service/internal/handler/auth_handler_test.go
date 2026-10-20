@@ -77,6 +77,38 @@ func TestRegisterReturnsCreatedUserWithoutPasswordHash(t *testing.T) {
 	}
 }
 
+func TestRegisterReturnsEveryPasswordPolicyProblem(t *testing.T) {
+	handler := newHandler(fakeAuth{err: &service.PasswordPolicyError{
+		Problems: []string{"must be at least 10 characters long", "is too common; choose something less guessable"},
+	}})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/auth/register",
+		strings.NewReader(`{"email":"surfer@example.com","password":"password"}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", response.Code)
+	}
+	var body struct {
+		Error    string   `json:"error"`
+		Problems []string `json:"problems"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Problems) != 2 || !strings.Contains(body.Error, "password") {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestLoginDoesNotApplyTheRegistrationPasswordPolicy(t *testing.T) {
+	handler := newHandler(fakeAuth{session: testSession()})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/auth/login",
+		strings.NewReader(`{"email":"legacy@example.com","password":"short8pw"}`)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("legacy short passwords must still reach the service, got %d", response.Code)
+	}
+}
+
 func TestRegisterRejectsDuplicateEmail(t *testing.T) {
 	handler := newHandler(fakeAuth{err: repository.ErrEmailInUse})
 	response := httptest.NewRecorder()

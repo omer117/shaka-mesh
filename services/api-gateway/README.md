@@ -16,6 +16,24 @@ are added to the request context and forwarded to beach-service and
 community-service as `X-Authenticated-User-ID` and
 `X-Authenticated-User-Email`.
 
+## Brute-force protection
+
+`POST /api/v1/auth/login` and `/api/v1/auth/register` are rate-limited per
+client IP and per submitted email (case-insensitive) with an in-memory token
+bucket (`internal/ratelimit`, behind a `Limiter` interface so Redis can replace
+it for multi-replica deployments). Exceeding a limit returns `429` with a
+`Retry-After` header (seconds) and the usual CORS headers. Login and register
+have separate buckets.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AUTH_RATE_LIMIT_IP_BURST` / `AUTH_RATE_LIMIT_IP_PER_MINUTE` | 20 / 20 | Attempts allowed at once, then refill per minute, per IP |
+| `AUTH_RATE_LIMIT_EMAIL_BURST` / `AUTH_RATE_LIMIT_EMAIL_PER_MINUTE` | 5 / 5 | Same, per email |
+| `TRUSTED_PROXY_HOPS` | `0` | Reverse proxies in front of the gateway. `0` ignores `X-Forwarded-For` (anyone could forge it to dodge the limit); `1` behind Caddy takes the last entry Caddy appended. The cloud overlay sets `1`. |
+
+Limits reset when the gateway restarts and are per replica. If you run the
+gateway directly on the internet, leave `TRUSTED_PROXY_HOPS=0`.
+
 The browser CORS origin is configured with `CORS_ALLOWED_ORIGIN` (defaults to
 `http://localhost:3000`). It must be one explicit origin; `*` is rejected at
 startup because the gateway answers with `Access-Control-Allow-Credentials:

@@ -37,8 +37,16 @@ The refresh token is **never** in the body; it only travels in the
 `HttpOnly; Secure; SameSite=Lax` cookie `shaka_refresh`, so page scripts
 cannot read it. The browser keeps the access token in memory only.
 
-Passwords must be 8-72 bytes; password hashes use bcrypt and are never included
-in API responses. Login failures return the same generic `401` response.
+New passwords (`/auth/register`) must be 10-72 bytes, must not be on the embedded
+common-password list (`internal/service/common_passwords.txt`, case-insensitive),
+must not be one repeated character, and must not equal the email address (or its
+local part). A rejected password returns `400` listing every broken rule:
+`{"error": "password does not meet requirements: ...", "problems": ["must be at least 10 characters long", ...]}`.
+Login does not apply the policy, so accounts created under the old 8-byte
+minimum can still sign in; they are only checked for being non-empty and at most
+72 bytes. Password hashes use bcrypt and are never included in API responses.
+Login failures return the same generic `401` response. The gateway rate-limits
+login and register (see the api-gateway README).
 
 ## Refresh tokens
 

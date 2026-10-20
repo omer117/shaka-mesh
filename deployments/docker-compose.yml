@@ -164,6 +164,13 @@ services:
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random secret of at least 32 bytes}
       JWT_ISSUER: shaka-mesh-auth
+      # Brute-force limits for POST /auth/login and /auth/register (token buckets).
+      AUTH_RATE_LIMIT_IP_BURST: ${AUTH_RATE_LIMIT_IP_BURST:-20}
+      AUTH_RATE_LIMIT_IP_PER_MINUTE: ${AUTH_RATE_LIMIT_IP_PER_MINUTE:-20}
+      AUTH_RATE_LIMIT_EMAIL_BURST: ${AUTH_RATE_LIMIT_EMAIL_BURST:-5}
+      AUTH_RATE_LIMIT_EMAIL_PER_MINUTE: ${AUTH_RATE_LIMIT_EMAIL_PER_MINUTE:-5}
+      # 0 = ignore X-Forwarded-For (clients connect directly). The cloud overlay sets 1 for Caddy.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
     ports:
       - "8000:8000"
     depends_on:

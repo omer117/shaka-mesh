@@ -105,6 +105,10 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** Individual validation problems (e.g. password policy), when provided. */
+    public readonly problems: string[] = [],
+    /** Seconds to wait before retrying, from a 429 Retry-After header. */
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -136,20 +140,31 @@ async function request<T>(
 
   if (!response.ok) {
     let message = `Request failed (${response.status}).`;
+    let problems: string[] = [];
     try {
       const body: unknown = await response.json();
-      if (
-        typeof body === "object" &&
-        body !== null &&
-        "error" in body &&
-        typeof body.error === "string"
-      ) {
-        message = body.error;
+      if (typeof body === "object" && body !== null) {
+        if ("error" in body && typeof body.error === "string") {
+          message = body.error;
+        }
+        if ("problems" in body && Array.isArray(body.problems)) {
+          problems = body.problems.filter(
+            (item): item is string => typeof item === "string",
+          );
+        }
       }
     } catch {
       // Keep the status-based message when the upstream response is not JSON.
     }
-    throw new ApiError(response.status, message);
+    const retryAfter = Number(response.headers.get("Retry-After"));
+    throw new ApiError(
+      response.status,
+      message,
+      problems,
+      response.status === 429 && Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter
+        : undefined,
+    );
   }
 
   if (response.status === 204) return undefined as T;

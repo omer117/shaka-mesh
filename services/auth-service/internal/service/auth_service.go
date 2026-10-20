@@ -17,11 +17,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const (
-	MinPasswordBytes = 8
-	MaxPasswordBytes = 72
-)
-
 var ErrInvalidCredentials = errors.New("invalid email or password")
 
 type UserRepository interface {
@@ -51,8 +46,8 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*do
 	if err != nil {
 		return nil, err
 	}
-	if !validPassword(password) {
-		return nil, errors.New("password must be between 8 and 72 bytes")
+	if err := ValidateNewPassword(password, email); err != nil {
+		return nil, err
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -72,7 +67,7 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*do
 
 func (s *AuthService) Login(ctx context.Context, email, password string) (*Session, error) {
 	email, err := normalizeEmail(email)
-	if err != nil || !validPassword(password) {
+	if err != nil || !validLoginPassword(password) {
 		return nil, ErrInvalidCredentials
 	}
 	user, err := s.users.GetByEmail(ctx, email)
@@ -104,8 +99,10 @@ func normalizeEmail(email string) (string, error) {
 	return strings.ToLower(email), nil
 }
 
-func validPassword(password string) bool {
-	return len(password) >= MinPasswordBytes && len(password) <= MaxPasswordBytes
+// validLoginPassword is deliberately looser than the registration policy so
+// accounts created under older, weaker rules can still sign in.
+func validLoginPassword(password string) bool {
+	return len(password) > 0 && len(password) <= MaxPasswordBytes
 }
 
 func newUserID() (string, error) {

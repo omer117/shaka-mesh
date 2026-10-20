@@ -68,7 +68,7 @@ func (h authHandler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON request body")
 		return
 	}
-	if err := validateCredentials(input); err != nil {
+	if err := validateEmailField(input.Email); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -79,7 +79,15 @@ func (h authHandler) register(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "email is already registered")
 			return
 		}
-		if strings.HasPrefix(err.Error(), "email ") || strings.HasPrefix(err.Error(), "password ") {
+		var policyErr *service.PasswordPolicyError
+		if errors.As(err, &policyErr) {
+			writeJSON(w, http.StatusBadRequest, struct {
+				Error    string   `json:"error"`
+				Problems []string `json:"problems"`
+			}{Error: policyErr.Error(), Problems: policyErr.Problems})
+			return
+		}
+		if strings.HasPrefix(err.Error(), "email ") {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -96,7 +104,7 @@ func (h authHandler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON request body")
 		return
 	}
-	if err := validateCredentials(input); err != nil {
+	if err := validateLoginInput(input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -198,16 +206,26 @@ type credentials struct {
 	Password string `json:"password"`
 }
 
-func validateCredentials(input credentials) error {
-	email := strings.TrimSpace(input.Email)
+func validateEmailField(raw string) error {
+	email := strings.TrimSpace(raw)
 	if email == "" || utf8.RuneCountInString(email) > 320 {
 		return errors.New("email is required and must be at most 320 characters")
+	}
+	return nil
+}
+
+// validateLoginInput only checks shape. The password policy applies when a
+// password is chosen (register), not when one is presented, so older accounts
+// with shorter passwords can still sign in.
+func validateLoginInput(input credentials) error {
+	if err := validateEmailField(input.Email); err != nil {
+		return err
 	}
 	if strings.TrimSpace(input.Password) == "" {
 		return errors.New("password is required")
 	}
-	if len(input.Password) < service.MinPasswordBytes || len(input.Password) > service.MaxPasswordBytes {
-		return fmt.Errorf("password must be between %d and %d bytes", service.MinPasswordBytes, service.MaxPasswordBytes)
+	if len(input.Password) > service.MaxPasswordBytes {
+		return fmt.Errorf("password must be at most %d bytes", service.MaxPasswordBytes)
 	}
 	return nil
 }
