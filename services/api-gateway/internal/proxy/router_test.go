@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/omer-asraf/shaka-api-gateway/internal/authn"
+	"github.com/omer-asraf/shaka-api-gateway/internal/authn/authntest"
 	"github.com/omer-asraf/shaka-api-gateway/internal/ratelimit"
 )
 
@@ -52,7 +53,7 @@ func TestRouterForwardsAuthAndBeachRequests(t *testing.T) {
 	authURL, _ := url.Parse(authServer.URL)
 	beachURL, _ := url.Parse(beachServer.URL)
 	communityURL, _ := url.Parse(communityServer.URL)
-	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
@@ -82,17 +83,14 @@ func TestRouterForwardsAuthAndBeachRequests(t *testing.T) {
 	protectedResponse := httptest.NewRecorder()
 	protectedRequest := httptest.NewRequest(http.MethodPost, "/api/v1/beaches", nil)
 	protectedRequest.Header.Set("X-Authenticated-User-ID", "forged-client-value")
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, authn.Claims{
+	token := authntest.NewSigner(t, "kid-1").Token(t, authn.Claims{
 		UserID: "user-42",
 		Email:  "surfer@example.com",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: "test-issuer", Subject: "user-42",
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
 		},
-	}).SignedString([]byte("0123456789abcdef0123456789abcdef"))
-	if err != nil {
-		t.Fatalf("sign test token: %v", err)
-	}
+	})
 	protectedRequest.Header.Set("Authorization", "Bearer "+token)
 	handler.ServeHTTP(protectedResponse, protectedRequest)
 	if protectedResponse.Code != http.StatusOK {
@@ -127,7 +125,7 @@ func TestRouterReturnsNotFoundForUnknownRoute(t *testing.T) {
 	authURL, _ := url.Parse("http://localhost:8081")
 	beachURL, _ := url.Parse("http://localhost:8080")
 	communityURL, _ := url.Parse("http://localhost:8083")
-	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
@@ -146,7 +144,7 @@ func TestRouterAllowsConfiguredFrontendCORS(t *testing.T) {
 	authURL, _ := url.Parse("http://localhost:8081")
 	beachURL, _ := url.Parse("http://localhost:8080")
 	communityURL, _ := url.Parse("http://localhost:8083")
-	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
@@ -183,7 +181,7 @@ func TestRouterRejectsUnconfiguredCORSOrigin(t *testing.T) {
 	authURL, _ := url.Parse("http://localhost:8081")
 	beachURL, _ := url.Parse("http://localhost:8080")
 	communityURL, _ := url.Parse("http://localhost:8083")
-	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
@@ -206,7 +204,7 @@ func TestRouterRejectsUnconfiguredCORSOrigin(t *testing.T) {
 
 func TestRouterRejectsWildcardCORSOrigin(t *testing.T) {
 	target, _ := url.Parse("http://localhost:8081")
-	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
@@ -227,7 +225,7 @@ func TestRouterForwardsRefreshCookieBothWays(t *testing.T) {
 	defer authServer.Close()
 	authURL, _ := url.Parse(authServer.URL)
 	other, _ := url.Parse("http://localhost:1")
-	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
@@ -255,7 +253,7 @@ func TestRouterRateLimitsLoginAndKeepsCORSHeadersOn429(t *testing.T) {
 	defer authServer.Close()
 	authURL, _ := url.Parse(authServer.URL)
 	other, _ := url.Parse("http://localhost:1")
-	jwtMiddleware, err := authn.NewMiddleware("0123456789abcdef0123456789abcdef", "test-issuer")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
@@ -285,5 +283,34 @@ func TestRouterRateLimitsLoginAndKeepsCORSHeadersOn429(t *testing.T) {
 	}
 	if second.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
 		t.Fatal("429 must carry CORS headers so the browser can read it")
+	}
+}
+
+func TestRouterServesJWKSPublicallyThroughAuthProxy(t *testing.T) {
+	gotPath := make(chan string, 1)
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath <- r.URL.Path
+		_, _ = io.WriteString(w, `{"keys":[]}`)
+	}))
+	defer authServer.Close()
+	authURL, _ := url.Parse(authServer.URL)
+	other, _ := url.Parse("http://localhost:1")
+	jwtMiddleware, err := authn.NewMiddleware(authntest.NewSigner(t, "kid-1").Keys(), "test-issuer")
+	if err != nil {
+		t.Fatalf("create middleware: %v", err)
+	}
+	handler, err := NewHandler(authURL, other, other, jwtMiddleware, "http://localhost:3000")
+	if err != nil {
+		t.Fatalf("create gateway handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil))
+	if response.Code != http.StatusOK || <-gotPath != "/.well-known/jwks.json" {
+		t.Fatalf("expected public JWKS passthrough, got %d", response.Code)
+	}
+	post := httptest.NewRecorder()
+	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/.well-known/jwks.json", nil))
+	if post.Code == http.StatusOK {
+		t.Fatal("only GET may reach the JWKS endpoint")
 	}
 }

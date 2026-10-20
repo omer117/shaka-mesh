@@ -132,15 +132,15 @@ type UserClaims struct {
 }
 
 type JWTManager struct {
-	secret []byte
+	keys   *KeySet
 	issuer string
 	ttl    time.Duration
 	now    func() time.Time
 }
 
-func NewJWTManager(secret, issuer string, ttl time.Duration) (*JWTManager, error) {
-	if len(secret) < 32 {
-		return nil, errors.New("JWT_SECRET must be at least 32 bytes")
+func NewJWTManager(keys *KeySet, issuer string, ttl time.Duration) (*JWTManager, error) {
+	if keys == nil {
+		return nil, errors.New("JWT key set is required")
 	}
 	if strings.TrimSpace(issuer) == "" {
 		return nil, errors.New("JWT_ISSUER must not be empty")
@@ -148,8 +148,11 @@ func NewJWTManager(secret, issuer string, ttl time.Duration) (*JWTManager, error
 	if ttl <= 0 {
 		return nil, errors.New("JWT_TTL must be a positive duration")
 	}
-	return &JWTManager{secret: []byte(secret), issuer: issuer, ttl: ttl, now: time.Now}, nil
+	return &JWTManager{keys: keys, issuer: issuer, ttl: ttl, now: time.Now}, nil
 }
+
+// JWKS exposes the public verification keys for /.well-known/jwks.json.
+func (m *JWTManager) JWKS() JWKS { return m.keys.JWKS() }
 
 func (m *JWTManager) Issue(user *domain.User) (string, time.Time, error) {
 	now := m.now().UTC().Truncate(time.Second)
@@ -164,22 +167,27 @@ func (m *JWTManager) Issue(user *domain.User) (string, time.Time, error) {
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(m.secret)
+	key, kid := m.keys.SigningKey()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = kid
+	signed, err := token.SignedString(key)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("sign access token: %w", err)
 	}
 	return signed, expiresAt, nil
 }
 
+// Parse verifies a token against the published keys (selected by its kid).
 func (m *JWTManager) Parse(rawToken string) (*UserClaims, error) {
 	claims := &UserClaims{}
 	token, err := jwt.ParseWithClaims(rawToken, claims, func(token *jwt.Token) (any, error) {
-		if token.Method != jwt.SigningMethodHS256 {
-			return nil, fmt.Errorf("unexpected JWT signing method %q", token.Method.Alg())
+		kid, _ := token.Header["kid"].(string)
+		key, ok := m.keys.PublicKey(kid)
+		if !ok {
+			return nil, fmt.Errorf("unknown signing key %q", kid)
 		}
-		return m.secret, nil
-	}, jwt.WithIssuer(m.issuer), jwt.WithExpirationRequired())
+		return key, nil
+	}, jwt.WithValidMethods([]string{"RS256"}), jwt.WithIssuer(m.issuer), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, fmt.Errorf("parse access token: %w", err)
 	}

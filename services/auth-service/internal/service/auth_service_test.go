@@ -51,7 +51,7 @@ func (r *memoryUsers) GetByID(_ context.Context, id string) (*domain.User, error
 
 func newTestAuth(t *testing.T, users UserRepository) (*AuthService, *JWTManager, *memoryRefresh) {
 	t.Helper()
-	tokens, err := NewJWTManager("0123456789abcdef0123456789abcdef", "test-issuer", time.Minute)
+	tokens, err := NewJWTManager(testKeySet(t), "test-issuer", time.Minute)
 	if err != nil {
 		t.Fatalf("create JWT manager: %v", err)
 	}
@@ -115,14 +115,14 @@ func TestLoginUsesGenericInvalidCredentialsError(t *testing.T) {
 	}
 }
 
-func TestJWTManagerRejectsWeakConfiguration(t *testing.T) {
-	if _, err := NewJWTManager("short", "test", time.Minute); err == nil {
-		t.Fatal("expected weak secret to be rejected")
+func TestJWTManagerRejectsBadConfiguration(t *testing.T) {
+	if _, err := NewJWTManager(nil, "test", time.Minute); err == nil {
+		t.Fatal("expected missing key set to be rejected")
 	}
-	if _, err := NewJWTManager("0123456789abcdef0123456789abcdef", "", time.Minute); err == nil {
+	if _, err := NewJWTManager(testKeySet(t), "", time.Minute); err == nil {
 		t.Fatal("expected empty issuer to be rejected")
 	}
-	if _, err := NewJWTManager("0123456789abcdef0123456789abcdef", "test", 0); err == nil {
+	if _, err := NewJWTManager(testKeySet(t), "test", 0); err == nil {
 		t.Fatal("expected non-positive TTL to be rejected")
 	}
 }

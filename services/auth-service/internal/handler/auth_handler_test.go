@@ -47,6 +47,38 @@ func (f fakeAuth) Logout(_ context.Context, token string) error {
 	return f.logoutErr
 }
 
+type fakeKeys struct{}
+
+func (fakeKeys) JWKS() service.JWKS {
+	return service.JWKS{Keys: []service.JWK{{KeyType: "RSA", Use: "sig", Algorithm: "RS256", KeyID: "kid-1", N: "abc", E: "AQAB"}}}
+}
+
+func TestJWKSEndpointServesPublicKeysOnly(t *testing.T) {
+	response := httptest.NewRecorder()
+	newHandler(fakeAuth{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", response.Code)
+	}
+	if got := response.Header().Get("Cache-Control"); !strings.Contains(got, "max-age") {
+		t.Fatalf("expected cacheable JWKS, got %q", got)
+	}
+	var body struct {
+		Keys []map[string]string `json:"keys"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Keys) != 1 {
+		t.Fatalf("unexpected JWKS body: %s (%v)", response.Body.String(), err)
+	}
+	key := body.Keys[0]
+	if key["kid"] != "kid-1" || key["alg"] != "RS256" || key["kty"] != "RSA" {
+		t.Fatalf("unexpected key: %v", key)
+	}
+	for _, private := range []string{"d", "p", "q", "dp", "dq", "qi"} {
+		if _, found := key[private]; found {
+			t.Fatalf("JWKS leaked private parameter %q", private)
+		}
+	}
+}
+
 func testSession() *service.Session {
 	return &service.Session{
 		AccessToken:      "signed-token",
@@ -58,7 +90,7 @@ func testSession() *service.Session {
 }
 
 func newHandler(auth fakeAuth) http.Handler {
-	return New(auth, DefaultCookieConfig())
+	return New(auth, DefaultCookieConfig(), fakeKeys{})
 }
 
 func TestRegisterReturnsCreatedUserWithoutPasswordHash(t *testing.T) {
@@ -243,7 +275,7 @@ func TestLogoutWithoutCookieStillSucceeds(t *testing.T) {
 func TestCookieConfigIsHonoured(t *testing.T) {
 	handler := New(fakeAuth{session: testSession()}, CookieConfig{
 		Name: "shaka_refresh", Path: "/auth", Secure: false, SameSite: http.SameSiteStrictMode,
-	})
+	}, fakeKeys{})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/auth/login",
 		strings.NewReader(`{"email":"surfer@example.com","password":"correct horse battery"}`)))

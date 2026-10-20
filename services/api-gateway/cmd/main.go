@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,10 +27,6 @@ func main() {
 }
 
 func run() error {
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		return errors.New("JWT_SECRET must be set")
-	}
 	issuer := os.Getenv("JWT_ISSUER")
 	if issuer == "" {
 		issuer = "shaka-mesh-auth"
@@ -50,7 +47,18 @@ func run() error {
 	if allowedOrigin == "" {
 		allowedOrigin = "http://localhost:3000"
 	}
-	jwtMiddleware, err := authn.NewMiddleware(jwtSecret, issuer)
+	// Verification uses auth-service's public keys only; there is no shared secret.
+	jwksURL := os.Getenv("JWKS_URL")
+	if jwksURL == "" {
+		jwksURL = strings.TrimRight(authTarget.String(), "/") + "/.well-known/jwks.json"
+	}
+	jwks := authn.NewJWKSClient(jwksURL)
+	prefetchCtx, cancelPrefetch := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := jwks.Prefetch(prefetchCtx); err != nil {
+		log.Printf("could not load signing keys yet (will retry on first request): %v", err)
+	}
+	cancelPrefetch()
+	jwtMiddleware, err := authn.NewMiddleware(jwks, issuer)
 	if err != nil {
 		return err
 	}

@@ -36,9 +36,28 @@ cp deployments/.env.example deployments/.env
 ```
 
 Replace every placeholder in `deployments/.env`. Generate long random
-hexadecimal values for `POSTGRES_PASSWORD`, `RABBITMQ_DEFAULT_PASS`, and
-`JWT_SECRET` (at least 64 hex characters for the JWT secret). Keep this file
-private and never commit it.
+hexadecimal values for `POSTGRES_PASSWORD` and `RABBITMQ_DEFAULT_PASS`. Keep
+this file private and never commit it.
+
+Access tokens are signed with an RSA key that only auth-service holds (the
+gateway verifies with the public key it fetches from auth-service). Create the
+key on the VM and point `.env` at it:
+
+```sh
+mkdir -p deployments/secrets
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out deployments/secrets/jwt_private.pem
+chmod 644 deployments/secrets/jwt_private.pem   # the container user must be able to read it
+# deployments/.env: JWT_PRIVATE_KEY_FILE=/run/secrets/jwt_private.pem
+```
+
+(`deployments/secrets/` is git-ignored. Alternatively inline the PEM as
+`JWT_PRIVATE_KEY` in `.env`, see `.env.example`.) Back the key up: if it is lost,
+users only have to sign in again, since refresh tokens live in the database.
+If no key is configured, auth-service generates an ephemeral one and logs a
+warning, which is not suitable for production. **Existing deployments**: remove
+`JWT_SECRET` from `.env` (it is no longer read) and add the key before
+`up -d --build`; everyone is signed out once because old HS256 tokens are
+rejected, and refresh cookies then restore sessions silently.
 
 Set `PUBLIC_HOSTNAME` to `<reserved-public-ip>.nip.io`; this hostname resolves
 to the VM and allows Caddy to request a publicly trusted HTTPS certificate.

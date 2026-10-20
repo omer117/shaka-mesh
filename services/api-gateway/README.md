@@ -4,14 +4,23 @@ The gateway listens on port `8000` by default and routes auth requests to
 `AUTH_SERVICE_URL`, beach requests to `BEACH_SERVICE_URL`, and shop/forum
 requests to `COMMUNITY_SERVICE_URL` (default `http://localhost:8083`).
 
-`JWT_SECRET` is required and must match auth-service. `JWT_ISSUER` must also
-match; its default is `shaka-mesh-auth`. Upstream URLs default to local
+The gateway verifies access tokens with auth-service's **public** keys only: it
+holds no signing secret and cannot mint tokens. Keys are fetched from
+`JWKS_URL` (default `<AUTH_SERVICE_URL>/.well-known/jwks.json`), cached for 5
+minutes, and re-fetched when a token carries an unknown `kid` (at most once per
+10 seconds, so forged kids cannot hammer auth-service). If auth-service is
+briefly unreachable, already-cached keys keep working. `JWT_ISSUER` must match
+auth-service; its default is `shaka-mesh-auth`. Upstream URLs default to local
 development addresses and can be overridden for deployment.
+
+The gateway also republishes the JWKS publicly at `GET /.well-known/jwks.json`
+for any other service that needs to verify tokens (none currently does; they
+trust the identity headers below).
 
 Public reads include beach `GET` requests, `GET /api/v1/shop/products`, and
 forum category/thread `GET` requests. Auth routes under `/api/v1/auth/` are
 public. Mutating beach, shop, cart, and forum operations require an unexpired
-JWT signed with HS256 by auth-service. Verified `user_id` and `email` claims
+JWT signed with RS256 by auth-service (tokens using any other algorithm, such as HS256 or `none`, or with a missing or unknown `kid`, are rejected). Verified `user_id` and `email` claims
 are added to the request context and forwarded to beach-service and
 community-service as `X-Authenticated-User-ID` and
 `X-Authenticated-User-Email`.
@@ -43,24 +52,17 @@ PATCH, DELETE, OPTIONS`. `Set-Cookie` and `Cookie` headers pass through the
 work with the cookie set by auth-service. The notification service's SSE endpoint is available
 directly at `http://localhost:8082/events`.
 
-For local full-stack startup, set a random secret of at least 32 bytes before
-running Compose. For Bash/Git Bash:
+For local full-stack startup no secret is needed:
 
 ```bash
-export JWT_SECRET="$(openssl rand -hex 32)"
 docker compose -f deployments/docker-compose.yml up --build
 ```
 
-For PowerShell:
-
-```powershell
-$bytes = [byte[]]::new(32)
-$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-$rng.GetBytes($bytes)
-$rng.Dispose()
-$env:JWT_SECRET = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
-docker compose -f deployments\docker-compose.yml up --build
-```
+With no signing key configured, auth-service generates a throw-away RSA key at
+startup and logs a warning (tokens are invalidated whenever it restarts). To
+use a stable key locally, create `deployments/secrets/jwt_private.pem` (see
+`deployments/.env.example`) and start with
+`JWT_PRIVATE_KEY_FILE=/run/secrets/jwt_private.pem`.
 
 The gateway is exposed on `http://localhost:8000`. The auth, beach and
 community services are reachable only on the shared Compose network. The local

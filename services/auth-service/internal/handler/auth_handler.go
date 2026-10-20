@@ -46,14 +46,21 @@ func DefaultCookieConfig() CookieConfig {
 	}
 }
 
+// KeyPublisher exposes the public verification keys.
+type KeyPublisher interface {
+	JWKS() service.JWKS
+}
+
 type authHandler struct {
 	auth    Authenticator
 	cookies CookieConfig
+	keys    KeyPublisher
 }
 
-func New(auth Authenticator, cookies CookieConfig) http.Handler {
-	h := authHandler{auth: auth, cookies: cookies}
+func New(auth Authenticator, cookies CookieConfig, keys KeyPublisher) http.Handler {
+	h := authHandler{auth: auth, cookies: cookies, keys: keys}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/jwks.json", h.jwks)
 	mux.HandleFunc("POST /auth/register", h.register)
 	mux.HandleFunc("POST /auth/login", h.login)
 	mux.HandleFunc("POST /auth/refresh", h.refresh)
@@ -193,6 +200,13 @@ func (h authHandler) clearCookie(w http.ResponseWriter) {
 		Secure:   h.cookies.Secure,
 		SameSite: h.cookies.SameSite,
 	})
+}
+
+// jwks serves the public keys used to verify access tokens. Verifiers cache it;
+// the short max-age bounds how long a retired key can linger after rotation.
+func (h authHandler) jwks(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, h.keys.JWKS())
 }
 
 func (h authHandler) health(w http.ResponseWriter, _ *http.Request) {

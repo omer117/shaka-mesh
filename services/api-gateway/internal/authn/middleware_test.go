@@ -1,4 +1,4 @@
-package authn
+package authn_test
 
 import (
 	"context"
@@ -8,22 +8,46 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/omer-asraf/shaka-api-gateway/internal/authn"
+	"github.com/omer-asraf/shaka-api-gateway/internal/authn/authntest"
 )
 
-const testSecret = "0123456789abcdef0123456789abcdef"
+func validClaims(userID string) authn.Claims {
+	return authn.Claims{
+		UserID: userID,
+		Email:  "surfer@example.com",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer: "test-issuer", Subject: userID,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
+		},
+	}
+}
 
-func TestMiddlewareAllowsPublicBeachListAndAuthRoutes(t *testing.T) {
-	middleware, err := NewMiddleware(testSecret, "test-issuer")
+func okHandler(m *authn.Middleware) http.Handler {
+	return m.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+}
+
+func bearerRequest(token string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/beaches", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	return request
+}
+
+func TestMiddlewareAllowsPublicBeachListAuthAndJWKSRoutes(t *testing.T) {
+	signer := authntest.NewSigner(t, "kid-1")
+	middleware, err := authn.NewMiddleware(signer.Keys(), "test-issuer")
 	if err != nil {
 		t.Fatalf("create middleware: %v", err)
 	}
-	handler := middleware.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	handler := okHandler(middleware)
 
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/api/v1/beaches", nil),
 		httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil),
+		httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil),
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
@@ -34,91 +58,96 @@ func TestMiddlewareAllowsPublicBeachListAndAuthRoutes(t *testing.T) {
 }
 
 func TestMiddlewareRequiresTokenForBeachMutation(t *testing.T) {
-	middleware, err := NewMiddleware(testSecret, "test-issuer")
-	if err != nil {
-		t.Fatalf("create middleware: %v", err)
-	}
-	handler := middleware.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	signer := authntest.NewSigner(t, "kid-1")
+	middleware, _ := authn.NewMiddleware(signer.Keys(), "test-issuer")
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/beaches", nil))
+	okHandler(middleware).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/beaches", nil))
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", response.Code)
 	}
 }
 
-func TestMiddlewareRejectsExpiredAndWrongSignatureTokens(t *testing.T) {
-	middleware, err := NewMiddleware(testSecret, "test-issuer")
-	if err != nil {
-		t.Fatalf("create middleware: %v", err)
+func TestMiddlewareRejectsExpiredWrongKeyUnknownKidAndWrongIssuer(t *testing.T) {
+	signer := authntest.NewSigner(t, "kid-1")
+	attacker := authntest.Generate(t, "kid-1") // same kid, different key
+	stranger := authntest.Generate(t, "kid-unknown")
+	middleware, _ := authn.NewMiddleware(signer.Keys(), "test-issuer")
+	handler := okHandler(middleware)
+
+	expired := validClaims("user-1")
+	expired.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute))
+	wrongIssuer := validClaims("user-1")
+	wrongIssuer.Issuer = "someone-else"
+	subjectMismatch := validClaims("user-1")
+	subjectMismatch.Subject = "user-2"
+
+	cases := map[string]string{
+		"expired":          signer.Token(t, expired),
+		"forged signature": attacker.Token(t, validClaims("user-1")),
+		"unknown kid":      stranger.Token(t, validClaims("user-1")),
+		"wrong issuer":     signer.Token(t, wrongIssuer),
+		"subject mismatch": signer.Token(t, subjectMismatch),
+		"garbage":          "not.a.jwt",
 	}
-	handler := middleware.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	now := time.Now()
-	for _, claims := range []*Claims{
-		{
-			UserID: "user-1",
-			RegisteredClaims: jwt.RegisteredClaims{
-				Issuer: "test-issuer", Subject: "user-1",
-				ExpiresAt: jwt.NewNumericDate(now.Add(-time.Minute)),
-			},
-		},
-		{
-			UserID: "user-1",
-			RegisteredClaims: jwt.RegisteredClaims{
-				Issuer: "test-issuer", Subject: "user-1",
-				ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
-			},
-		},
-	} {
-		key := []byte(testSecret)
-		if claims.ExpiresAt.After(now) {
-			key = []byte("a-different-signing-secret-with-enough-bytes")
-		}
-		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(key)
-		if err != nil {
-			t.Fatalf("sign token: %v", err)
-		}
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/beaches", nil)
-		request.Header.Set("Authorization", "Bearer "+token)
+	for name, token := range cases {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
+		handler.ServeHTTP(response, bearerRequest(token))
 		if response.Code != http.StatusUnauthorized {
-			t.Errorf("expected invalid token to return 401, got %d", response.Code)
+			t.Errorf("%s: expected 401, got %d", name, response.Code)
 		}
 	}
 }
 
-func TestMiddlewareAttachesClaimsToContext(t *testing.T) {
-	middleware, err := NewMiddleware(testSecret, "test-issuer")
-	if err != nil {
-		t.Fatalf("create middleware: %v", err)
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
-		UserID: "user-1",
-		Email:  "surfer@example.com",
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: "test-issuer", Subject: "user-1",
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
-		},
-	}).SignedString([]byte(testSecret))
-	if err != nil {
-		t.Fatalf("sign token: %v", err)
-	}
+func TestMiddlewareRejectsHMACAndNoneTokens(t *testing.T) {
+	signer := authntest.NewSigner(t, "kid-1")
+	middleware, _ := authn.NewMiddleware(signer.Keys(), "test-issuer")
+	handler := okHandler(middleware)
 
-	var got *Claims
+	// Algorithm confusion: an HS256 token "signed" with public key material,
+	// and an unsigned token, both naming a real kid.
+	hmacToken := jwt.NewWithClaims(jwt.SigningMethodHS256, validClaims("user-1"))
+	hmacToken.Header["kid"] = "kid-1"
+	hmacSigned, _ := hmacToken.SignedString(signer.Key.N.Bytes())
+	noneToken := jwt.NewWithClaims(jwt.SigningMethodNone, validClaims("user-1"))
+	noneToken.Header["kid"] = "kid-1"
+	noneSigned, _ := noneToken.SignedString(jwt.UnsafeAllowNoneSignatureType)
+
+	// A validly signed RS256 token without a kid header must also be refused.
+	noKid := jwt.NewWithClaims(jwt.SigningMethodRS256, validClaims("user-1"))
+	noKidSigned, _ := noKid.SignedString(signer.Key)
+
+	for name, token := range map[string]string{"hs256": hmacSigned, "none": noneSigned, "no kid": noKidSigned} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, bearerRequest(token))
+		if response.Code != http.StatusUnauthorized {
+			t.Errorf("%s: expected 401, got %d", name, response.Code)
+		}
+	}
+}
+
+func TestMiddlewareAcceptsValidRS256TokenAndAttachesClaims(t *testing.T) {
+	signer := authntest.NewSigner(t, "kid-1")
+	middleware, _ := authn.NewMiddleware(signer.Keys(), "test-issuer")
+
+	var got *authn.Claims
 	handler := middleware.Wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		got, _ = UserClaimsFromContext(r.Context())
+		got, _ = authn.UserClaimsFromContext(r.Context())
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/beaches", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
-	handler.ServeHTTP(httptest.NewRecorder(), request)
+	handler.ServeHTTP(httptest.NewRecorder(), bearerRequest(signer.Token(t, validClaims("user-1"))))
 	if got == nil || got.UserID != "user-1" || got.Email != "surfer@example.com" {
 		t.Fatalf("expected user claims in context, got %+v", got)
 	}
-	if _, ok := UserClaimsFromContext(context.Background()); ok {
+	if _, ok := authn.UserClaimsFromContext(context.Background()); ok {
 		t.Fatal("unexpected claims in empty context")
+	}
+}
+
+func TestNewMiddlewareValidatesArguments(t *testing.T) {
+	signer := authntest.NewSigner(t, "kid-1")
+	if _, err := authn.NewMiddleware(nil, "test-issuer"); err == nil {
+		t.Error("nil key source accepted")
+	}
+	if _, err := authn.NewMiddleware(signer.Keys(), " "); err == nil {
+		t.Error("blank issuer accepted")
 	}
 }
