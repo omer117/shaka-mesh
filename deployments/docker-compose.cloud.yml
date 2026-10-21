@@ -13,6 +13,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?Set RABBITMQ_DEFAULT_USER in deployments/.env}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?Set RABBITMQ_DEFAULT_PASS in deployments/.env}
     ports: !reset []
+    healthcheck:
+      interval: 30s
 
   beach-service:
     environment:

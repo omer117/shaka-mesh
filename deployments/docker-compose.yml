@@ -35,7 +35,9 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      # Plain TCP probe: rabbitmq-diagnostics boots a whole Erlang VM per check, which
+      # piles up and exhausts memory on small hosts.
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/5672"]
       interval: 10s
       timeout: 5s
       retries: 5
