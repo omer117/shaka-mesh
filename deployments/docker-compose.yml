@@ -80,7 +80,7 @@ services:
     environment:
       DATABASE_URL: postgres://shaka_user:shaka_password@beach-db:5432/shaka_beach_db?sslmode=disable
       # RS256 signing key (PEM). Leave all unset for local dev: auth-service then generates
-      # an ephemeral key at startup and logs a warning. See deployments/.env.example.
+      # an ephemeral key at startup and logs a warning. See deployments/REMOTE_DEPLOYMENT.md for key setup.
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
       JWT_PRIVATE_KEY_FILE: ${JWT_PRIVATE_KEY_FILE:-}
       JWT_PREVIOUS_PUBLIC_KEYS: ${JWT_PREVIOUS_PUBLIC_KEYS:-}
@@ -96,12 +96,10 @@ services:
       HTTP_ADDR: :8081
       BEACH_SERVICE_URL: http://beach-service:8080
       AVATAR_STORAGE_DIR: ${AVATAR_STORAGE_DIR:-/data/avatars}
-    volumes:
-      - avatar_data:/data/avatars
     expose:
       - "8081"
     volumes:
-      # Optional key files for JWT_PRIVATE_KEY_FILE=/run/secrets/<name>.pem (git-ignored directory).
+      - avatar_data:/data/avatars
       - ./secrets:/run/secrets:ro
     depends_on:
       beach-db:
