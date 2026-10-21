@@ -36,3 +36,5 @@ deployments/beach_db_data/
 .idea/
 .DS_Store
 Thumbs.db
+# Claude Code agent worktrees
+.claude/worktrees/
